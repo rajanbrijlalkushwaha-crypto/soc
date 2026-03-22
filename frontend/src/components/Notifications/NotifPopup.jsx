@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import './NotifPopup.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
@@ -17,7 +19,7 @@ export default function NotifPopup() {
   if (!notif) return null;
 
   const markSeen = async (id) => {
-    await fetch(`/api/notifications/${id}/seen`, { method: 'POST', credentials: 'include' }).catch(() => {});
+    await fetch(`${API_BASE}/api/notifications/${id}/seen`, { method: 'POST', credentials: 'include' }).catch(() => {});
   };
 
   const dismiss = async () => {
@@ -27,7 +29,7 @@ export default function NotifPopup() {
     } else {
       dispatch({ type: 'SET_NOTIF_POPUP', payload: [] });
       // refresh unread count
-      fetch('/api/notifications', { credentials: 'include' })
+      fetch(`${API_BASE}/api/notifications`, { credentials: 'include' })
         .then(r => r.json())
         .then(d => {
           if (d.success) {
@@ -68,16 +70,16 @@ export default function NotifPopup() {
             <div className="npopup-img-wrap">
               <img
                 className="npopup-img"
-                src={`/api/notifications/file/${notif.id}`}
+                src={`${API_BASE}/api/notifications/file/${notif.id}`}
                 alt={notif.fileName || 'attachment'}
-                onClick={() => window.open(`/api/notifications/file/${notif.id}`, '_blank')}
+                onClick={() => window.open(`${API_BASE}/api/notifications/file/${notif.id}`, '_blank')}
               />
             </div>
           )}
           {notif.hasFile && notif.fileType === 'application/pdf' && (
             <a
               className="npopup-attach"
-              href={`/api/notifications/file/${notif.id}`}
+              href={`${API_BASE}/api/notifications/file/${notif.id}`}
               download={notif.fileName || 'document.pdf'}
               target="_blank"
               rel="noreferrer"

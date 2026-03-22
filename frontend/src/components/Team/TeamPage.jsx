@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import './TeamPage.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function useBodyScroll() {
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -15,7 +17,7 @@ export default function TeamPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/team', { credentials: 'include' })
+    fetch(`${API_BASE}/api/team`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.success) setMembers(d.members || []); })
       .catch(() => {})
@@ -48,7 +50,7 @@ export default function TeamPage() {
               <div key={m.id} className="team-member-card">
                 <div className="team-member-avatar">
                   {m.hasPhoto
-                    ? <img src={`/api/team/photo/${m.id}?t=1`} alt={m.name} className="team-member-avatar-img" />
+                    ? <img src={`${API_BASE}/api/team/photo/${m.id}?t=1`} alt={m.name} className="team-member-avatar-img" />
                     : <span className="team-member-avatar-init">{initials(m.name)}</span>
                   }
                 </div>

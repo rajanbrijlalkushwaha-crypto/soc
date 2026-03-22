@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import './SubscriptionPage.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function useBodyScroll() {
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -41,7 +43,7 @@ export default function SubscriptionPage() {
   const [profile, setProfile] = useState(null);
 
   useEffect(() => {
-    fetch('/api/auth/profile', { credentials: 'include' })
+    fetch(`${API_BASE}/api/auth/profile`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.success) setProfile(d.profile); })
       .catch(() => {});

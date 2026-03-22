@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import './JoinMeetPage.css';
+
+const API_BASE = process.env.REACT_APP_API_URL || '';
 import dpImg from '../../dp.png';
 import oneoneImg from '../../oneone.png';
 import { useApp } from '../../context/AppContext';
@@ -9,12 +11,12 @@ export default function JoinMeetPage() {
   const [links, setLinks] = useState({ public_meet: '', community_meet: '' });
 
   const handleLogout = async () => {
-    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }); } catch {}
+    try { await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' }); } catch {}
     window.location.replace('/');
   };
 
   useEffect(() => {
-    fetch('/api/meet-links', { credentials: 'include' })
+    fetch(`${API_BASE}/api/meet-links`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.success) setLinks(d.links); })
       .catch(() => {});

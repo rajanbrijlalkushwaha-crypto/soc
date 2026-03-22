@@ -1,4 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react';
+
+const API_BASE = process.env.REACT_APP_API_URL || '';
 import { AppProvider, useApp } from './context/AppContext';
 import IndexPage from './components/Index/IndexPage';
 import SideNav from './components/sidenav/sidenav';
@@ -71,16 +73,16 @@ function AppContent() {
 
   // Fetch user info + UI settings + notifications on mount (all in parallel after auth)
   useEffect(() => {
-    fetch('/api/auth/check-session', { credentials: 'include' })
+    fetch(`${API_BASE}/api/auth/check-session`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => {
         if (data.authenticated && data.user) {
           dispatch({ type: 'SET_USER', payload: data.user });
           // Fire all three in parallel
           Promise.all([
-            fetch('/api/auth/ui-settings', { credentials: 'include' }).then(r => r.json()).catch(() => null),
-            fetch('/api/notifications/popup', { credentials: 'include' }).then(r => r.json()).catch(() => null),
-            fetch('/api/notifications', { credentials: 'include' }).then(r => r.json()).catch(() => null),
+            fetch(`${API_BASE}/api/auth/ui-settings`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
+            fetch(`${API_BASE}/api/notifications/popup`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
+            fetch(`${API_BASE}/api/notifications`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
           ]).then(([ui, popup, notifs]) => {
             if (ui?.success && ui.settings && Object.keys(ui.settings).length > 0)
               dispatch({ type: 'SET_UI_SETTINGS', payload: ui.settings });

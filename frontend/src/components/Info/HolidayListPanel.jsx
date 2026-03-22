@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import './InfoPanel.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function useBodyScroll() {
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -16,7 +18,7 @@ export default function HolidayListPanel() {
   const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
-    fetch('/api/market/holidays', { credentials: 'include' })
+    fetch(`${API_BASE}/api/market/holidays`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
         setHolidays(d.data || []);

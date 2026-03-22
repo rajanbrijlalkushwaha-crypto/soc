@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import './AITrainPanel.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function useBodyScroll() {
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -11,7 +13,7 @@ function useBodyScroll() {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-const api = (url) => fetch(url, { credentials: 'include' }).then(r => r.json());
+const api = (url) => fetch(`${API_BASE}${url}`, { credentials: 'include' }).then(r => r.json());
 
 function DirectionBadge({ dir }) {
   if (!dir) return null;
@@ -444,7 +446,7 @@ export default function AITrainPanel() {
     setRunning(true);
     setMsg('');
     try {
-      const d = await fetch('/api/trainai/run', {
+      const d = await fetch(`${API_BASE}/api/trainai/run`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force }),

@@ -2,12 +2,14 @@ import { useApp } from '../../context/AppContext';
 import HistoricalControls from '../Historical/HistoricalControls';
 import SymbolSelect from './SymbolSelect';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 export default function Topbar() {
   const { state, dispatch } = useApp();
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
     } catch (err) {
       console.error('Logout error:', err);
     }

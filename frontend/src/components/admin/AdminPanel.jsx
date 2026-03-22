@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import './AdminPanel.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function useBodyScroll() {
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -12,7 +14,7 @@ function useBodyScroll() {
 
 // ── Helper ──────────────────────────────────────────────────────────────────
 const API = (path, { body, headers: extraHeaders, ...rest } = {}) =>
-  fetch(path, {
+  fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(extraHeaders || {}) },
     body: body ? JSON.stringify(body) : undefined,
@@ -20,7 +22,7 @@ const API = (path, { body, headers: extraHeaders, ...rest } = {}) =>
   }).then(r => r.json());
 
 const ADMIN_API = (path, token, { body, headers: extraHeaders, ...rest } = {}) =>
-  fetch(path, {
+  fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(extraHeaders || {}) },
     body: body ? JSON.stringify(body) : undefined,
@@ -644,7 +646,7 @@ function TeamTab() {
   const fileRef                 = useRef(null);
 
   const load = () => {
-    fetch('/api/team', { credentials: 'include' })
+    fetch(`${API_BASE}/api/team`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.success) setMembers(d.members || []); })
       .catch(() => {});
@@ -790,7 +792,7 @@ function NotificationsTab() {
   const fileRef                 = useRef(null);
 
   const load = () => {
-    fetch('/api/notifications', { credentials: 'include' })
+    fetch(`${API_BASE}/api/notifications`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.success) setNotifs(d.notifications || []); })
       .catch(() => {});
@@ -813,7 +815,7 @@ function NotificationsTab() {
     fd.append('message', message);
     if (file) fd.append('file', file);
     try {
-      const r = await fetch('/api/admin/notifications', { method: 'POST', credentials: 'include', body: fd });
+      const r = await fetch(`${API_BASE}/api/admin/notifications`, { method: 'POST', credentials: 'include', body: fd });
       const d = await r.json();
       if (d.success) {
         load();
@@ -1092,7 +1094,7 @@ function MeetTab() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/meet-links', { credentials: 'include' })
+    fetch(`${API_BASE}/api/meet-links`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.success) setLinks(d.links); })
       .catch(() => {})
@@ -1172,7 +1174,7 @@ export default function AdminPanel() {
     try {
       const parts = tokenInput.includes(':') ? tokenInput.split(':') : null;
       if (!parts) { setTokenError('Format: username:password'); return; }
-      const d = await fetch('/api/admin/login', {
+      const d = await fetch(`${API_BASE}/api/admin/login`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: parts[0], password: parts[1] }),

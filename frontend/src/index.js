@@ -17,12 +17,14 @@ window.fetch = (input, init = {}) => {
   return _nativeFetch(input, init);
 };
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function MainApp() {
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    fetch('/api/auth/check-session', { credentials: 'include' })
+    fetch(`${API_BASE}/api/auth/check-session`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => {
         setIsAuthenticated(!!data.authenticated);

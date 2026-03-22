@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import './PowerAIStockPanel.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function StockCard({ s, type, onLive, onHistorical }) {
   const fmt   = (n) => n != null ? Number(n).toLocaleString('en-IN') : '--';
   const isSupport = type === 'sup';
@@ -69,7 +71,7 @@ export default function PowerAIStockPanel() {
   const [lastUpdated, setLastUpdated]   = useState(null);
 
   const handleLogout = async () => {
-    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }); } catch (_) {}
+    try { await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' }); } catch (_) {}
     window.location.replace('/');
   };
 
@@ -94,7 +96,7 @@ export default function PowerAIStockPanel() {
   // Load available dates — poll every 30s so newly generated dates appear automatically
   useEffect(() => {
     const fetchDates = () => {
-      fetch('/api/power-ai/dates', { credentials: 'include' })
+      fetch(`${API_BASE}/api/power-ai/dates`, { credentials: 'include' })
         .then(r => r.json())
         .then(d => {
           const arr = Array.isArray(d) ? d : [];

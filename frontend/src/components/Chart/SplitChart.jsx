@@ -3,7 +3,8 @@ import { createChart, CandlestickSeries } from 'lightweight-charts';
 import { useApp } from '../../context/AppContext';
 import './SplitChart.css';
 
-const apiFetch = (url) => fetch(url, { credentials: 'include' }).then(r => r.json());
+const API_BASE = process.env.REACT_APP_API_URL || '';
+const apiFetch = (url) => fetch(`${API_BASE}${url}`, { credentials: 'include' }).then(r => r.json());
 
 // Times in _chart_spot.json are IST strings (e.g. "09:00", "09:15", "15:30").
 // Embedded as-if UTC so chart labels show IST time directly.
@@ -107,17 +108,17 @@ export default function SplitChart() {
     // Live mode — try RAM-cache endpoint first; if not ready/unavailable,
     // fall back to fetching the latest date from stock-dates then stock-signals.
     const fetchLive = () =>
-      fetch('/api/trainai/stock-signals/live', { credentials: 'include' })
+      fetch(`${API_BASE}/api/trainai/stock-signals/live`, { credentials: 'include' })
         .then(r => r.json())
         .then(d => {
           if (d?.success) { pickSignal(d); return; }
           // Fallback: get latest date, then fetch signals for that date
-          return fetch('/api/trainai/stock-dates', { credentials: 'include' })
+          return fetch(`${API_BASE}/api/trainai/stock-dates`, { credentials: 'include' })
             .then(r => r.json())
             .then(dd => {
               const latest = dd?.dates?.[0];
               if (!latest) return;
-              return fetch(`/api/trainai/stock-signals/${latest}`, { credentials: 'include' })
+              return fetch(`${API_BASE}/api/trainai/stock-signals/${latest}`, { credentials: 'include' })
                 .then(r => r.json()).then(pickSignal);
             });
         })

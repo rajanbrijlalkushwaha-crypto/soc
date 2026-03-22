@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import './ProfilePage.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 // Unlock body scroll while this full-page component is mounted
 function useBodyScroll() {
   useEffect(() => {
@@ -67,13 +69,13 @@ export default function ProfilePage() {
 
   // Load full profile on mount
   useEffect(() => {
-    fetch('/api/auth/profile', { credentials: 'include' })
+    fetch(`${API_BASE}/api/auth/profile`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
         if (d.success) {
           setProfile(d.profile);
           if (d.profile.hasPhoto) {
-            setPhotoUrl(`/api/auth/photo/${d.profile.userId}?t=${Date.now()}`);
+            setPhotoUrl(`${API_BASE}/api/auth/photo/${d.profile.userId}?t=${Date.now()}`);
           }
         }
       })
@@ -90,11 +92,11 @@ export default function ProfilePage() {
     const fd = new FormData();
     fd.append('photo', file);
     try {
-      const r = await fetch('/api/auth/upload-photo', { method: 'POST', credentials: 'include', body: fd });
+      const r = await fetch(`${API_BASE}/api/auth/upload-photo`, { method: 'POST', credentials: 'include', body: fd });
       const d = await r.json();
       if (d.success) {
         const userId = profile?.userId || state.user?.id;
-        setPhotoUrl(`/api/auth/photo/${userId}?t=${Date.now()}`);
+        setPhotoUrl(`${API_BASE}/api/auth/photo/${userId}?t=${Date.now()}`);
         setPhotoMsg('Photo updated!');
       } else {
         setPhotoMsg(d.error || 'Upload failed');
@@ -114,7 +116,7 @@ export default function ProfilePage() {
     if (pwForm.newPw.length < 6) { setPwError('Password must be at least 6 characters'); return; }
     setPwLoading(true);
     try {
-      const r = await fetch('/api/auth/change-password', {
+      const r = await fetch(`${API_BASE}/api/auth/change-password`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentPassword: pwForm.current, newPassword: pwForm.newPw }),
@@ -138,7 +140,7 @@ export default function ProfilePage() {
     const settings = { theme: state.theme };
     UI_TOGGLES.forEach(({ key }) => { settings[key] = state[key]; });
     try {
-      const r = await fetch('/api/auth/ui-settings', {
+      const r = await fetch(`${API_BASE}/api/auth/ui-settings`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),

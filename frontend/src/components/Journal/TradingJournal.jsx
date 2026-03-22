@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import './TradingJournal.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function useBodyScroll() {
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -36,7 +38,7 @@ export default function TradingJournal() {
   const [filterStrat, setFilterStrat] = useState('All');
 
   const loadEntries = () => {
-    fetch('/api/auth/journal', { credentials: 'include' })
+    fetch(`${API_BASE}/api/auth/journal`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.success) setEntries(d.entries || []); })
       .catch(() => {});
@@ -51,7 +53,7 @@ export default function TradingJournal() {
     if (!form.symbol.trim()) { setMsg('Symbol is required'); return; }
     setSaving(true); setMsg('');
     try {
-      const r = await fetch('/api/auth/journal', {
+      const r = await fetch(`${API_BASE}/api/auth/journal`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -72,7 +74,7 @@ export default function TradingJournal() {
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this entry?')) return;
     try {
-      const r = await fetch(`/api/auth/journal/${id}`, { method: 'DELETE', credentials: 'include' });
+      const r = await fetch(`${API_BASE}/api/auth/journal/${id}`, { method: 'DELETE', credentials: 'include' });
       const d = await r.json();
       if (d.success) setEntries(prev => prev.filter(e => e.id !== id));
     } catch {}

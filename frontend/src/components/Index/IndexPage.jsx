@@ -3,6 +3,8 @@ import { useApp } from '../../context/AppContext';
 import { fetchLiveData, fetchMarketHolidays, fetchMarketTimings } from '../../services/api';
 import './IndexPage.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function useBodyScroll() {
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -139,7 +141,7 @@ export default function IndexPage() {
   // Load AI stock signals (admin/member only)
   useEffect(() => {
     if (!isAdminOrMember) return;
-    fetch('/api/trainai/stock-signals/live', { credentials: 'include' })
+    fetch(`${API_BASE}/api/trainai/stock-signals/live`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.success) setAiSignals(d); })
       .catch(() => {});
@@ -192,7 +194,7 @@ export default function IndexPage() {
   };
 
   const handleLogout = async () => {
-    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }); } catch (_) {}
+    try { await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' }); } catch (_) {}
     window.location.replace('/');
   };
 

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import './NotificationPanel.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 function fmtDate(iso) {
   return new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
@@ -15,7 +17,7 @@ export default function NotificationPanel() {
 
   const load = () => {
     setLoading(true);
-    fetch('/api/notifications', { credentials: 'include' })
+    fetch(`${API_BASE}/api/notifications`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
         if (d.success) {
@@ -31,7 +33,7 @@ export default function NotificationPanel() {
   useEffect(() => { if (state.notifPanelOpen) load(); }, [state.notifPanelOpen]);
 
   const markAllRead = async () => {
-    await fetch('/api/notifications/seen-all', { method: 'POST', credentials: 'include' });
+    await fetch(`${API_BASE}/api/notifications/seen-all`, { method: 'POST', credentials: 'include' });
     setNotifs(prev => prev.map(n => ({ ...n, seen: true, seenCount: Math.max(5, n.seenCount) })));
     dispatch({ type: 'SET_NOTIF_UNREAD', payload: 0 });
   };
@@ -69,16 +71,16 @@ export default function NotificationPanel() {
                   <div className="notif-item-img-wrap">
                     <img
                       className="notif-item-img"
-                      src={`/api/notifications/file/${n.id}`}
+                      src={`${API_BASE}/api/notifications/file/${n.id}`}
                       alt={n.fileName || 'attachment'}
-                      onClick={() => window.open(`/api/notifications/file/${n.id}`, '_blank')}
+                      onClick={() => window.open(`${API_BASE}/api/notifications/file/${n.id}`, '_blank')}
                     />
                   </div>
                 )}
                 {n.hasFile && n.fileType === 'application/pdf' && (
                   <a
                     className="notif-item-attach"
-                    href={`/api/notifications/file/${n.id}`}
+                    href={`${API_BASE}/api/notifications/file/${n.id}`}
                     download={n.fileName || 'document.pdf'}
                     target="_blank"
                     rel="noreferrer"
