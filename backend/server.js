@@ -306,8 +306,23 @@ app.use(express.static(reactBuildPath));
 // ================================
 // CORS Configuration
 // ================================
+const ALLOWED_ORIGINS = [
+  'http://soc.ai.in',
+  'https://soc.ai.in',
+  'http://beta.soc.ai.in',
+  'https://beta.soc.ai.in',
+  'http://localhost:3000',
+  'http://localhost:3100',
+];
 app.use(cors({
-  origin: (_origin, callback) => callback(null, true),
+  origin: (origin, callback) => {
+    // allow requests with no origin (mobile apps, curl, server-to-server)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    // allow any localhost / 127.0.0.1 port in dev
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
+    return callback(null, true); // allow all for now; tighten in production if needed
+  },
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-By'],
 }));

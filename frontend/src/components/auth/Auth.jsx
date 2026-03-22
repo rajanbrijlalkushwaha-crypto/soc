@@ -34,7 +34,7 @@ const AuthPage = () => {
       .then(r => r.json())
       .then(data => {
         if (data.authenticated && !resetToken) {
-          window.location.href = '/';
+          window.location.href = '/optionchain';
         }
       })
       .catch(() => {});
@@ -114,7 +114,7 @@ const AuthPage = () => {
 
       if (data.success) {
         showAlert('Login successful! Redirecting...', 'success');
-        setTimeout(() => window.location.href = '/', 1000);
+        setTimeout(() => window.location.href = '/optionchain', 1000);
       } else {
         showAlert(data.error || 'Login failed', 'error');
       }
@@ -192,7 +192,7 @@ const AuthPage = () => {
 
       if (data.success) {
         showAlert('Email verified! Redirecting...', 'success');
-        setTimeout(() => window.location.href = '/', 1200);
+        setTimeout(() => window.location.href = '/optionchain', 1200);
       } else {
         showAlert(data.error, 'error');
       }
