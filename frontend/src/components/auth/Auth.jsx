@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './auth.css';
 
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
 const AuthPage = () => {
   // State management
   const [activeTab, setActiveTab] = useState('signin');
@@ -28,7 +30,7 @@ const AuthPage = () => {
 
   // Check session and URL params on mount
   useEffect(() => {
-    fetch('/api/auth/check-session', { credentials: 'include' })
+    fetch(`${API_BASE}/api/auth/check-session`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => {
         if (data.authenticated && !resetToken) {
@@ -54,7 +56,7 @@ const AuthPage = () => {
     const resetInactiveTimer = () => {
       clearTimeout(inactiveTimer);
       inactiveTimer = setTimeout(async () => {
-        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+        await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
         window.location.href = '/?reason=timeout';
       }, 5 * 60 * 1000);
     };
@@ -101,7 +103,7 @@ const AuthPage = () => {
     setLoading({ show: true, text: 'Signing in...' });
 
     try {
-      const res = await fetch('/api/auth/signin', {
+      const res = await fetch(`${API_BASE}/api/auth/signin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -139,7 +141,7 @@ const AuthPage = () => {
     setCurrentEmail(signUpData.email);
 
     try {
-      const res = await fetch('/api/auth/signup', {
+      const res = await fetch(`${API_BASE}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -179,7 +181,7 @@ const AuthPage = () => {
     setLoading({ show: true, text: 'Verifying...' });
 
     try {
-      const res = await fetch('/api/auth/verify-otp', {
+      const res = await fetch(`${API_BASE}/api/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -204,7 +206,7 @@ const AuthPage = () => {
     setLoading({ show: true, text: 'Sending new OTP...' });
 
     try {
-      const res = await fetch('/api/auth/resend-verification', {
+      const res = await fetch(`${API_BASE}/api/auth/resend-verification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: currentEmail, verificationType: 'otp' })
@@ -231,7 +233,7 @@ const AuthPage = () => {
     setLoading({ show: true, text: 'Sending reset link...' });
 
     try {
-      const res = await fetch('/api/auth/forgot-password', {
+      const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: forgotEmail })
@@ -263,7 +265,7 @@ const AuthPage = () => {
     setLoading({ show: true, text: 'Updating password...' });
 
     try {
-      const res = await fetch('/api/auth/reset-password', {
+      const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: resetToken, newPassword: resetPasswords.newPassword })

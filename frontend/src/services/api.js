@@ -82,12 +82,12 @@ export const fetchMarketTimings = () =>
 
 // ─── AUTH ───
 export const loginUser = (data) =>
-  api.post('/api/auth/login', data).then(r => r.data);
+  api.post('/api/auth/signin', data).then(r => r.data);
 
 export const logoutUser = () =>
   api.post('/api/auth/logout').then(r => r.data);
 
 export const checkAuth = () =>
-  api.get('/api/auth/check').then(r => r.data);
+  api.get('/api/auth/check-session').then(r => r.data);
 
 export default api;
