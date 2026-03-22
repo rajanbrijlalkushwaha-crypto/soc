@@ -1,6 +1,4 @@
 import { useEffect, useCallback, useRef } from 'react';
-
-const API_BASE = process.env.REACT_APP_API_URL || '';
 import { AppProvider, useApp } from './context/AppContext';
 import IndexPage from './components/Index/IndexPage';
 import SideNav from './components/sidenav/sidenav';
@@ -30,6 +28,8 @@ import JoinMeetPage from './components/JoinMeet/JoinMeetPage';
 import SplitChart from './components/Chart/SplitChart';
 import SplitPane from './components/Layout/SplitPane';
 import { fetchSymbols, fetchLiveData, fetchLiveSignals, fetchShiftingData, fetchMCTRData, fetchStrategy40Data } from './services/api';
+
+const API_BASE = process.env.REACT_APP_API_URL || '';
 
 function AppContent() {
   const { state, dispatch, liveIntervalRef } = useApp();
