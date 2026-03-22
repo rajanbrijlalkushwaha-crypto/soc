@@ -1,0 +1,771 @@
+/* ── Page wrapper ── */
+.idx-page {
+  position: fixed;
+  top: 0;
+  left: 52px;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  background: #f0f4f8;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ═══════════════════════════════
+   WHITE TOP BAR
+═══════════════════════════════ */
+.idx-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 52px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  flex-shrink: 0;
+}
+
+.idx-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.idx-brand {
+  font-size: 17px;
+  font-weight: 900;
+  color: #1a1a2e;
+  letter-spacing: 0.5px;
+}
+.idx-brand span {
+  color: #ff6f00;
+}
+
+.idx-page-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  padding-left: 14px;
+  border-left: 1px solid #e2e8f0;
+}
+
+.idx-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.idx-market-closed-badge {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: #ef4444;
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.25);
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+.idx-ist-clock {
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+}
+
+.idx-refresh-time {
+  font-size: 11px;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.idx-live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: idx-pulse 2s infinite;
+}
+
+@keyframes idx-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.8); }
+}
+
+.idx-welcome {
+  font-size: 13px;
+  color: #475569;
+}
+.idx-welcome strong {
+  color: #ff6f00;
+  font-weight: 700;
+}
+
+.idx-logout-btn {
+  padding: 5px 14px;
+  background: rgba(255,111,0,0.08);
+  color: #ff6f00;
+  border: 1.5px solid #ff6f00;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.idx-logout-btn:hover {
+  background: rgba(255,111,0,0.18);
+}
+
+/* ═══════════════════════════════
+   CONTENT & GRID
+═══════════════════════════════ */
+.idx-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 28px 24px;
+}
+
+.idx-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #94a3b8;
+  margin-bottom: 16px;
+}
+
+.idx-grid {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 16px;
+  padding-bottom: 10px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.idx-grid::-webkit-scrollbar { height: 4px; }
+.idx-grid::-webkit-scrollbar-track { background: transparent; }
+.idx-grid::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+/* ═══════════════════════════════
+   SYMBOL CARD
+═══════════════════════════════ */
+.idx-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 18px 18px 16px;
+  cursor: pointer;
+  border: 1.5px solid #e8ecf0;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  overflow: hidden;
+  min-width: 210px;
+  flex-shrink: 0;
+}
+
+/* Blue accent bar for regular stocks */
+.idx-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #1976d2, #42a5f5);
+}
+
+/* Orange accent bar for known indices */
+.idx-card-index::before {
+  background: linear-gradient(90deg, #ff6f00, #ffa726);
+}
+
+.idx-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 12px 32px rgba(25,118,210,0.16);
+  border-color: #1976d2;
+}
+.idx-card-index:hover {
+  box-shadow: 0 12px 32px rgba(255,111,0,0.16);
+  border-color: #ff6f00;
+}
+
+.idx-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.idx-exchange-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.idx-exchange-badge.nse {
+  background: rgba(25,118,210,0.1);
+  color: #1976d2;
+}
+.idx-exchange-badge.bse {
+  background: rgba(255,111,0,0.1);
+  color: #ff6f00;
+}
+
+.idx-card-pills {
+  display: flex;
+  gap: 5px;
+}
+
+.idx-live-pill {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: #22c55e;
+  background: rgba(34,197,94,0.1);
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+
+.idx-closed-pill {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: #94a3b8;
+  background: rgba(148,163,184,0.12);
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+
+/* ── Symbol Name ── */
+.idx-card-name {
+  font-size: 14px;
+  font-weight: 800;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* Larger, highlighted for indices */
+.idx-card-name-index {
+  font-size: 18px;
+  font-weight: 900;
+  color: #0f172a;
+  letter-spacing: 0.2px;
+  background: linear-gradient(135deg, #ff6f00, #e65100);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Price ── */
+.idx-card-price {
+  font-size: 26px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+  min-height: 32px;
+}
+.idx-card-price.loading {
+  color: #cbd5e1;
+  letter-spacing: 6px;
+  font-size: 20px;
+}
+.idx-card-price.error {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ef4444;
+}
+
+.idx-card-time {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: -2px;
+}
+
+/* ── Footer / CTA Button ── */
+.idx-card-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.idx-cta-btn {
+  width: 100%;
+  padding: 9px 14px;
+  background: linear-gradient(135deg, #1976d2, #1565c0);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.18s, transform 0.12s, box-shadow 0.18s;
+  box-shadow: 0 2px 8px rgba(25,118,210,0.25);
+}
+
+.idx-cta-btn:hover {
+  background: linear-gradient(135deg, #1565c0, #0d47a1);
+  box-shadow: 0 4px 14px rgba(25,118,210,0.35);
+  transform: translateY(-1px);
+}
+
+.idx-card-index .idx-cta-btn {
+  background: linear-gradient(135deg, #ff6f00, #e65100);
+  box-shadow: 0 2px 8px rgba(255,111,0,0.25);
+}
+.idx-card-index .idx-cta-btn:hover {
+  background: linear-gradient(135deg, #e65100, #bf360c);
+  box-shadow: 0 4px 14px rgba(255,111,0,0.35);
+}
+
+.idx-cta-arrow {
+  font-size: 14px;
+  transition: transform 0.12s;
+}
+.idx-cta-btn:hover .idx-cta-arrow {
+  transform: translateX(3px);
+}
+
+/* ═══════════════════════════════
+   MARKET TIMINGS TABLE
+═══════════════════════════════ */
+.idx-timing-section {
+  margin-bottom: 28px;
+}
+
+.idx-timing-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.idx-timing-date {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #1976d2;
+  padding: 2px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+
+.idx-timing-table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 2px solid #000;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.idx-timing-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.idx-timing-table th,
+.idx-timing-table td {
+  border: 1px solid #000;
+}
+
+.idx-timing-table thead tr {
+  background: #ff6f00;
+}
+
+.idx-timing-table th {
+  padding: 11px 16px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.idx-timing-table td {
+  padding: 10px 16px;
+  color: #000;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.idx-timing-table tbody tr:hover {
+  background: #fff7ed;
+}
+
+/* Pivot table — exchanges as columns */
+.idx-timing-pivot thead th {
+  text-align: center;
+  vertical-align: bottom;
+  padding: 12px 14px 10px;
+}
+
+.idx-timing-pivot tbody td {
+  text-align: center;
+}
+
+.idx-timing-label-col {
+  width: 90px;
+  background: #fff3e0;
+}
+
+.idx-timing-row-label {
+  text-align: left !important;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #000;
+  white-space: nowrap;
+  background: #ede9fe;
+}
+
+.idx-exch-segment {
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+.idx-exch-tag {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.18);
+  color: #fff;
+}
+
+.idx-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  padding: 3px 9px;
+  border-radius: 20px;
+}
+.idx-status-badge.open {
+  color: #16a34a;
+  background: rgba(22,163,74,0.1);
+}
+.idx-status-badge.closed {
+  color: #94a3b8;
+  background: rgba(148,163,184,0.12);
+}
+.idx-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.idx-status-badge.open .idx-status-dot {
+  background: #22c55e;
+  animation: idx-pulse 2s infinite;
+}
+.idx-status-badge.closed .idx-status-dot {
+  background: #94a3b8;
+}
+
+/* ═══════════════════════════════
+   AI STOCK SIGNALS WIDGET
+═══════════════════════════════ */
+.idx-ai-section {
+  margin: 28px 0;
+  background: #ffffff;
+  border: 2px solid #000;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.idx-ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: #1a1a2e;
+  border-bottom: 2px solid #000;
+}
+
+.idx-ai-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.idx-ai-icon {
+  font-size: 16px;
+}
+
+.idx-ai-header .idx-section-title {
+  color: #ffffff;
+  margin-bottom: 0;
+}
+
+.idx-ai-date {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ff6f00;
+  background: rgba(255,111,0,0.15);
+  padding: 2px 9px;
+  border-radius: 20px;
+}
+
+.idx-ai-viewall {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: rgba(255,255,255,0.12);
+  border: 1.5px solid rgba(255,255,255,0.3);
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+  letter-spacing: 0.3px;
+}
+.idx-ai-viewall:hover {
+  background: rgba(255,255,255,0.22);
+}
+
+.idx-ai-cols {
+  display: flex;
+  gap: 0;
+}
+
+.idx-ai-col {
+  flex: 1;
+  padding: 14px 16px;
+}
+
+.idx-ai-col-res {
+  border-right: 1.5px solid #e2e8f0;
+}
+
+.idx-ai-col-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.idx-ai-col-res .idx-ai-col-title { color: #c00; }
+.idx-ai-col-sup .idx-ai-col-title { color: #006600; }
+
+.idx-ai-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.idx-ai-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: default;
+}
+
+.idx-ai-pill-res {
+  background: rgba(200,0,0,0.08);
+  border: 1.5px solid rgba(200,0,0,0.2);
+  color: #900;
+}
+
+.idx-ai-pill-sup {
+  background: rgba(0,100,0,0.08);
+  border: 1.5px solid rgba(0,100,0,0.2);
+  color: #005500;
+}
+
+.idx-ai-pill-sym {
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.idx-ai-pill-score {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(0,0,0,0.08);
+  padding: 1px 6px;
+  border-radius: 10px;
+  letter-spacing: 0.2px;
+}
+
+/* ═══════════════════════════════
+   MARKET HOLIDAYS ACCORDION
+═══════════════════════════════ */
+.idx-holidays-section {
+  margin-top: 28px;
+  border-radius: 10px;
+  border: 2px solid #000;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.idx-holidays-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  background: #ffffff;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.idx-holidays-toggle:hover {
+  background: #f8fafc;
+}
+
+.idx-holidays-icon {
+  font-size: 16px;
+}
+
+.idx-holidays-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ff6f00;
+  background: rgba(255,111,0,0.1);
+  padding: 2px 8px;
+  border-radius: 20px;
+  margin-left: 4px;
+}
+
+.idx-holidays-chevron {
+  margin-left: auto;
+  font-size: 11px;
+  color: #94a3b8;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.idx-holidays-chevron.open {
+  transform: rotate(180deg);
+}
+
+.idx-holidays-body {
+  border-top: 2px solid #000;
+  overflow-x: auto;
+}
+
+.idx-holidays-empty {
+  padding: 20px 18px;
+  font-size: 13px;
+  color: #555;
+  text-align: center;
+}
+
+.idx-holidays-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.idx-holidays-table thead tr {
+  background: #1565c0;
+}
+
+.idx-holidays-table th {
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: #fff;
+  border: 1px solid #000;
+  white-space: nowrap;
+}
+
+.idx-holidays-table td {
+  padding: 10px 16px;
+  color: #000;
+  font-weight: 600;
+  border: 1px solid #000;
+}
+
+.idx-holidays-table tbody tr:last-child td {
+  border-bottom: 1px solid #000;
+}
+
+.idx-holidays-table tbody tr:hover {
+  background: #eff6ff;
+}
+
+.idx-holiday-today {
+  background: rgba(255,111,0,0.04) !important;
+}
+
+.idx-today-badge {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #ff6f00;
+  background: rgba(255,111,0,0.12);
+  padding: 1px 7px;
+  border-radius: 20px;
+  letter-spacing: 0.4px;
+}
+
+@media (max-width: 600px) {
+  .idx-topbar { padding: 0 10px; height: 46px; gap: 10px; }
+  .idx-ist-clock { display: none; }
+  .idx-refresh-time { display: none; }
+  .idx-market-closed-badge { font-size: 10px; padding: 2px 7px; }
+  .idx-page-title { display: none; }
+  .idx-content { padding: 14px 10px; }
+  .idx-card { min-width: 170px; padding: 14px 14px 12px; }
+  .idx-card-price { font-size: 22px; }
+  .idx-card-name-index { font-size: 15px; }
+  .idx-timing-table th,
+  .idx-timing-table td { padding: 8px 10px; font-size: 12px; }
+  .idx-holidays-toggle { padding: 12px 14px; font-size: 13px; }
+  .idx-holidays-table th,
+  .idx-holidays-table td { padding: 8px 10px; font-size: 12px; }
+}
+
+@media (max-width: 900px) and (min-width: 601px) {
+  .idx-content { padding: 18px 14px; }
+  .idx-card { min-width: 190px; }
+}

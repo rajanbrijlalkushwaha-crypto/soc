@@ -1,0 +1,32 @@
+{
+  "name": "soc-ai-server",
+  "version": "1.0.0",
+  "scripts": {
+    "build:frontend": "npm --prefix frontend run build",
+    "start": "npm run build:frontend && node backend/server.js",
+    "dev": "concurrently \"node backend/server.js\" \"npm --prefix frontend start\"",
+    "dev:watch": "concurrently \"nodemon backend/server.js\" \"npm --prefix frontend start\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.14"
+  },
+  "dependencies": {
+    "axios": "^1.13.6",
+    "bcrypt": "^6.0.0",
+    "compression": "^1.8.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "multer": "^2.1.0",
+    "nodemailer": "^8.0.1",
+    "protobufjs": "^8.0.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-scripts": "^5.0.1",
+    "session-file-store": "^1.5.0",
+    "twilio": "^5.12.2",
+    "ws": "^8.19.0"
+  }
+}

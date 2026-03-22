@@ -1,0 +1,42 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+
+# ── Runtime data (NEVER commit) ───────────────────────────────────────────────
+data/
+DATA/
+
+# ── User data (old location — do not commit) ──────────────────────────────────
+users/
+pending_users/
+sessions/
+teammember/
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+
+# ── Runtime config files at root (will move to data/config/) ──────────────────
+upstox_apps.json
+indicator_access.json
+schedule.json
+
+# ── Build output ──────────────────────────────────────────────────────────────
+frontend/build/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+*.swo
+
+# ── Backup/temp files ─────────────────────────────────────────────────────────
+*copy*
+*.zip
+untitled*

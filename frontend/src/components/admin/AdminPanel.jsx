@@ -1,0 +1,1274 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useApp } from '../../context/AppContext';
+import './AdminPanel.css';
+
+function useBodyScroll() {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'auto';
+    return () => { document.body.style.overflow = prev || ''; };
+  }, []);
+}
+
+// ── Helper ──────────────────────────────────────────────────────────────────
+const API = (path, { body, headers: extraHeaders, ...rest } = {}) =>
+  fetch(path, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...(extraHeaders || {}) },
+    body: body ? JSON.stringify(body) : undefined,
+    ...rest,
+  }).then(r => r.json());
+
+const ADMIN_API = (path, token, { body, headers: extraHeaders, ...rest } = {}) =>
+  fetch(path, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(extraHeaders || {}) },
+    body: body ? JSON.stringify(body) : undefined,
+    ...rest,
+  }).then(r => r.json());
+
+const ROLE_COLORS = { admin: '#b71c1c', member: '#1565c0', user: '#2e7d32' };
+const ROLE_LABELS = { admin: 'Admin', member: 'Member', user: 'User' };
+
+// ── Users Tab ───────────────────────────────────────────────────────────────
+function UsersTab({ isAdmin }) {
+  const [users, setUsers]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [msg, setMsg]           = useState('');
+  const [search, setSearch]     = useState('');
+
+  const loadUsers = useCallback(() => {
+    setLoading(true);
+    API('/api/auth/admin/users')
+      .then(d => { if (d.success) setUsers(d.users || []); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { loadUsers(); }, [loadUsers]);
+
+  const changeRole = async (userId, role) => {
+    const d = await API(`/api/auth/admin/users/${userId}/role`, { method: 'PATCH', body: { role } });
+    setMsg(d.message || (d.error ? `Error: ${d.error}` : ''));
+    if (d.success) loadUsers();
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  const toggleSuspend = async (userId) => {
+    const d = await API(`/api/auth/admin/users/${userId}/suspend`, { method: 'PATCH' });
+    setMsg(d.message || (d.error ? `Error: ${d.error}` : ''));
+    if (d.success) loadUsers();
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  const filtered = users.filter(u =>
+    !search || u.name.toLowerCase().includes(search.toLowerCase()) ||
+    u.email.toLowerCase().includes(search.toLowerCase()) ||
+    (u.mobile || '').includes(search)
+  );
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">User List</span>
+        <div className="admp-tab-actions">
+          <input
+            className="admp-search"
+            placeholder="Search name / email / mobile..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          <button className="admp-btn admp-btn-outline" onClick={loadUsers}>↻ Refresh</button>
+        </div>
+      </div>
+      {msg && <div className="admp-msg">{msg}</div>}
+      {loading ? (
+        <div className="admp-loading">Loading users...</div>
+      ) : (
+        <div className="admp-table-wrap">
+          <table className="admp-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Photo</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Mobile</th>
+                <th>Member Since</th>
+                <th>Role</th>
+                <th>Status</th>
+                {isAdmin && <th>Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr><td colSpan={isAdmin ? 9 : 8} className="admp-empty">No users found</td></tr>
+              ) : filtered.map((u, i) => (
+                <tr key={u.userId} className={u.suspended ? 'admp-row-suspended' : ''}>
+                  <td>{i + 1}</td>
+                  <td>
+                    {u.hasPhoto
+                      ? <img src={`/api/auth/photo/${u.userId}?t=1`} alt="" className="admp-avatar" />
+                      : <div className="admp-avatar admp-avatar-init">
+                          {u.name?.[0]?.toUpperCase() || '?'}
+                        </div>
+                    }
+                  </td>
+                  <td className="admp-name">{u.name || '—'}</td>
+                  <td className="admp-email">{u.email}</td>
+                  <td>{u.mobile || '—'}</td>
+                  <td className="admp-date">
+                    {u.createdAt
+                      ? new Date(u.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                      : '—'}
+                  </td>
+                  <td>
+                    {isAdmin ? (
+                      <select
+                        className="admp-role-select"
+                        value={u.role || 'user'}
+                        style={{ color: ROLE_COLORS[u.role || 'user'] }}
+                        onChange={e => changeRole(u.userId, e.target.value)}
+                      >
+                        <option value="user">User</option>
+                        <option value="member">Member</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    ) : (
+                      <span className="admp-role-badge" style={{ background: ROLE_COLORS[u.role || 'user'] }}>
+                        {ROLE_LABELS[u.role || 'user']}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <span className={`admp-status ${u.suspended ? 'suspended' : 'active'}`}>
+                      {u.suspended ? 'Suspended' : 'Active'}
+                    </span>
+                  </td>
+                  {isAdmin && (
+                    <td>
+                      <button
+                        className={`admp-btn admp-btn-sm ${u.suspended ? 'admp-btn-success' : 'admp-btn-warn'}`}
+                        onClick={() => toggleSuspend(u.userId)}
+                      >
+                        {u.suspended ? 'Unsuspend' : 'Suspend'}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── System Tab (admin only) ──────────────────────────────────────────────────
+function SystemTab({ adminToken }) {
+  const [status, setStatus]             = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [tokenVal, setTokenVal]         = useState('');
+  const [tokenMsg, setTokenMsg]         = useState('');
+  const [token2Val, setToken2Val]       = useState('');
+  const [token2Msg, setToken2Msg]       = useState('');
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const d = await ADMIN_API('/api/admin/status', adminToken);
+      if (d.success) setStatus(d.status);
+    } catch {}
+  }, [adminToken]);
+
+  useEffect(() => {
+    fetchStatus();
+    const id = setInterval(fetchStatus, 8000);
+    return () => clearInterval(id);
+  }, [fetchStatus]);
+
+  const startFetching = async () => {
+    setActionLoading(true);
+    await ADMIN_API('/api/admin/start', adminToken, { method: 'POST' });
+    await fetchStatus();
+    setActionLoading(false);
+  };
+
+  const stopFetching = async () => {
+    setActionLoading(true);
+    await ADMIN_API('/api/admin/stop', adminToken, { method: 'POST' });
+    await fetchStatus();
+    setActionLoading(false);
+  };
+
+  const updateToken = async (e) => {
+    e.preventDefault();
+    setTokenMsg('');
+    try {
+      const d = await ADMIN_API('/api/admin/token', adminToken, { method: 'POST', body: { access_token: tokenVal } });
+      setTokenMsg(d.message || (d.success ? 'Updated!' : 'Failed'));
+      if (d.success) setTokenVal('');
+    } catch { setTokenMsg('Error'); }
+  };
+
+  const updateToken2 = async (e) => {
+    e.preventDefault();
+    setToken2Msg('');
+    try {
+      const d = await ADMIN_API('/api/admin/token2', adminToken, { method: 'POST', body: { access_token: token2Val } });
+      setToken2Msg(d.message || (d.success ? 'Updated!' : 'Failed'));
+      if (d.success) setToken2Val('');
+    } catch { setToken2Msg('Error'); }
+  };
+
+  const running = status?.is_running;
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">System Status</span>
+      </div>
+
+      <div className="admp-sys-grid">
+        <div className="admp-sys-card">
+          <div className="admp-sys-label">Server Status</div>
+          <div className="admp-sys-val">
+            <span className={`admp-dot ${running ? 'green' : 'red'}`} />
+            {running ? 'Running' : 'Stopped'}
+          </div>
+          <div className="admp-sys-meta">
+            {status?.last_update && <span>Last update: <b>{status.last_update}</b></span>}
+            {status?.total_updates !== undefined && <span>Total updates: <b>{status.total_updates}</b></span>}
+            {status?.current_expiry && <span>Expiry: <b>{status.current_expiry}</b></span>}
+          </div>
+          <div className="admp-sys-btns">
+            <button
+              className={`admp-btn ${running ? 'admp-btn-warn' : 'admp-btn-success'}`}
+              onClick={running ? stopFetching : startFetching}
+              disabled={actionLoading}
+            >
+              {actionLoading ? '...' : running ? '⏹ Stop Fetching' : '▶ Start Fetching'}
+            </button>
+          </div>
+        </div>
+
+        <div className="admp-sys-card">
+          <div className="admp-sys-label">Update Access Token</div>
+          <form onSubmit={updateToken} className="admp-token-form">
+            <input
+              className="admp-input"
+              placeholder="Paste new Upstox access token..."
+              value={tokenVal}
+              onChange={e => setTokenVal(e.target.value)}
+            />
+            <button className="admp-btn admp-btn-primary" type="submit" disabled={!tokenVal}>
+              Update
+            </button>
+          </form>
+          {tokenMsg && <div className="admp-msg">{tokenMsg}</div>}
+        </div>
+
+        <div className="admp-sys-card">
+          <div className="admp-sys-label">API Key 2 <span style={{fontSize:'11px',opacity:.6,fontWeight:400}}>(failover — auto-switches on rate limit)</span></div>
+          <form onSubmit={updateToken2} className="admp-token-form">
+            <input
+              className="admp-input"
+              placeholder="Paste 2nd Upstox access token..."
+              value={token2Val}
+              onChange={e => setToken2Val(e.target.value)}
+            />
+            <button className="admp-btn admp-btn-primary" type="submit" disabled={!token2Val}>
+              Update
+            </button>
+          </form>
+          {token2Msg && <div className="admp-msg">{token2Msg}</div>}
+        </div>
+      </div>
+
+      {/* ── Upstox API Keys Manager ── */}
+      <UpstoxAppsPanel adminToken={adminToken} />
+    </div>
+  );
+}
+
+// ── Upstox Apps Panel ────────────────────────────────────────────────────────
+function UpstoxAppsPanel({ adminToken }) {
+  const BLANK = { name:'', api_key:'', api_secret:'', redirect_uri:'' };
+  const [apps,        setApps]       = useState([]);
+  const [adminEmail,  setAdminEmail] = useState('');
+  const [emailTime,   setEmailTime]  = useState('08:00');
+  const [newRow,      setNewRow]     = useState({ ...BLANK });
+  const [editSecrets, setEditSecrets]= useState({});
+  const [saving,      setSaving]     = useState(null);
+  const [adding,      setAdding]     = useState(false);
+  const [deleting,    setDeleting]   = useState(null);
+  const [sendingAll,  setSendingAll] = useState(false);
+  const [msg,         setMsg]        = useState('');
+
+  const load = useCallback(() => {
+    ADMIN_API('/api/admin/upstox-apps', adminToken)
+      .then(d => {
+        if (!d.success) return;
+        setApps(d.apps || []);
+        setAdminEmail(d.admin_email || '');
+        setEmailTime(d.email_time   || '08:00');
+      }).catch(() => {});
+  }, [adminToken]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const updateApp = (id, field, val) =>
+    setApps(prev => prev.map(a => a.id === id ? { ...a, [field]: val } : a));
+
+  const saveApp = async (app) => {
+    setSaving(app.id); setMsg('');
+    const body = { name: app.name, api_key: app.api_key, redirect_uri: app.redirect_uri };
+    const secret = editSecrets[app.id];
+    if (secret) body.api_secret = secret;
+    try {
+      const d = await ADMIN_API(`/api/admin/upstox-apps/${app.id}`, adminToken, { method: 'PUT', body });
+      if (d.success) { setEditSecrets(s => { const n={...s}; delete n[app.id]; return n; }); load(); }
+      setMsg(d.message || (d.success ? 'Saved!' : 'Failed'));
+    } catch { setMsg('Error'); }
+    finally { setSaving(null); }
+  };
+
+  const addApp = async () => {
+    if (!newRow.name || !newRow.api_key) { setMsg('Name and API Key required'); return; }
+    setAdding(true); setMsg('');
+    try {
+      const d = await ADMIN_API('/api/admin/upstox-apps', adminToken, { method: 'POST', body: newRow });
+      if (d.success) { setNewRow({ ...BLANK }); load(); }
+      setMsg(d.message || (d.success ? 'Added!' : 'Failed'));
+    } catch { setMsg('Error'); }
+    finally { setAdding(false); }
+  };
+
+  const deleteApp = async (id, name) => {
+    if (!window.confirm(`Delete "${name}"?`)) return;
+    setDeleting(id);
+    try { await ADMIN_API(`/api/admin/upstox-apps/${id}`, adminToken, { method: 'DELETE', body: {} }); load(); }
+    catch {} finally { setDeleting(null); }
+  };
+
+  const saveSettings = async () => {
+    setMsg('');
+    try {
+      const d = await ADMIN_API('/api/admin/upstox-settings', adminToken, { method: 'POST', body: { admin_email: adminEmail, email_time: emailTime } });
+      setMsg(d.message || (d.success ? 'Settings saved!' : 'Failed'));
+    } catch { setMsg('Error'); }
+  };
+
+  const sendAll = async () => {
+    setSendingAll(true); setMsg('');
+    try {
+      const d = await ADMIN_API('/api/admin/upstox-auth/send-all-email', adminToken, { method: 'POST', body: {} });
+      setMsg(d.message || (d.success ? 'Email sent!' : 'Failed'));
+    } catch { setMsg('Error'); }
+    finally { setSendingAll(false); }
+  };
+
+  const th = { padding:'6px 10px', textAlign:'left', fontSize:'11px', color:'#888', fontWeight:600, borderBottom:'1px solid #e0e0e0' };
+  const td = { padding:'6px 8px', verticalAlign:'middle' };
+
+  return (
+    <div style={{ marginTop:'28px' }}>
+      <div className="admp-tab-header" style={{ marginBottom:'12px' }}>
+        <span className="admp-tab-title">Upstox API Keys</span>
+        <div style={{ display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap' }}>
+          {apps.map(a => (
+            <span key={a.id} style={{ fontSize:'11px', fontWeight:700, padding:'2px 8px', borderRadius:'10px',
+              background: a.has_token ? 'rgba(0,180,0,0.1)' : 'rgba(200,0,0,0.1)',
+              color: a.has_token ? '#1a7a1a' : '#b00' }}>
+              {a.name}: {a.has_token ? '✓' : '✗'}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ overflowX:'auto', background:'#fff', border:'1px solid #e0e0e0', borderRadius:'8px' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'13px' }}>
+          <thead>
+            <tr>
+              <th style={th}>App Name</th>
+              <th style={th}>API Key</th>
+              <th style={th}>API Secret</th>
+              <th style={th}>Redirect URI</th>
+              <th style={th}>Token</th>
+              <th style={th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {apps.map(a => (
+              <tr key={a.id} style={{ borderBottom:'1px solid #f0f0f0' }}>
+                <td style={td}>
+                  <input className="admp-input" style={{ marginBottom:0, minWidth:'90px' }} value={a.name}
+                    onChange={e => updateApp(a.id, 'name', e.target.value)} />
+                </td>
+                <td style={td}>
+                  <input className="admp-input" style={{ marginBottom:0, minWidth:'200px', fontSize:'11px' }} value={a.api_key}
+                    onChange={e => updateApp(a.id, 'api_key', e.target.value)} />
+                </td>
+                <td style={td}>
+                  <input className="admp-input" style={{ marginBottom:0, minWidth:'110px' }} type="password"
+                    placeholder={a.has_secret ? '(saved)' : 'Secret'}
+                    value={editSecrets[a.id] || ''}
+                    onChange={e => setEditSecrets(s => ({ ...s, [a.id]: e.target.value }))} />
+                </td>
+                <td style={td}>
+                  <input className="admp-input" style={{ marginBottom:0, minWidth:'160px', fontSize:'11px' }} value={a.redirect_uri}
+                    onChange={e => updateApp(a.id, 'redirect_uri', e.target.value)} />
+                </td>
+                <td style={td}>
+                  <span style={{ fontSize:'11px', fontWeight:700, padding:'2px 8px', borderRadius:'10px',
+                    background: a.has_token ? 'rgba(0,180,0,0.1)' : 'rgba(200,0,0,0.1)',
+                    color: a.has_token ? '#1a7a1a' : '#b00' }}>
+                    {a.has_token ? '✓ Active' : '✗ None'}
+                  </span>
+                </td>
+                <td style={{ ...td, whiteSpace:'nowrap' }}>
+                  <button className="admp-btn admp-btn-primary" style={{ padding:'4px 12px', marginRight:'4px' }}
+                    disabled={saving === a.id} onClick={() => saveApp(a)}>
+                    {saving === a.id ? '…' : '💾 Save'}
+                  </button>
+                  <button className="admp-btn admp-btn-warn" style={{ padding:'4px 10px' }}
+                    disabled={deleting === a.id} onClick={() => deleteApp(a.id, a.name)}>
+                    {deleting === a.id ? '…' : '🗑'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {/* Add row */}
+            <tr style={{ background:'#fafafa', borderTop:'2px solid #e0e0e0' }}>
+              <td style={td}><input className="admp-input" style={{ marginBottom:0 }} placeholder="App Name" value={newRow.name} onChange={e => setNewRow(r=>({...r,name:e.target.value}))} /></td>
+              <td style={td}><input className="admp-input" style={{ marginBottom:0, fontSize:'11px' }} placeholder="API Key" value={newRow.api_key} onChange={e => setNewRow(r=>({...r,api_key:e.target.value}))} /></td>
+              <td style={td}><input className="admp-input" style={{ marginBottom:0 }} type="password" placeholder="Secret" value={newRow.api_secret} onChange={e => setNewRow(r=>({...r,api_secret:e.target.value}))} /></td>
+              <td style={td}><input className="admp-input" style={{ marginBottom:0, fontSize:'11px' }} placeholder="Redirect URI" value={newRow.redirect_uri} onChange={e => setNewRow(r=>({...r,redirect_uri:e.target.value}))} /></td>
+              <td style={td}></td>
+              <td style={td}>
+                <button className="admp-btn admp-btn-success" style={{ padding:'4px 14px' }} disabled={adding} onClick={addApp}>
+                  {adding ? '…' : '+ Add'}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Settings + Send */}
+      <div style={{ display:'flex', gap:'10px', alignItems:'flex-end', marginTop:'12px', flexWrap:'wrap' }}>
+        <label style={{ display:'flex', flexDirection:'column', gap:'4px', fontSize:'12px', color:'#666', flex:1, minWidth:'180px' }}>
+          Admin Email
+          <input className="admp-input" style={{ marginBottom:0 }} type="email" placeholder="your@email.com"
+            value={adminEmail} onChange={e => setAdminEmail(e.target.value)} />
+        </label>
+        <label style={{ display:'flex', flexDirection:'column', gap:'4px', fontSize:'12px', color:'#666' }}>
+          Daily Send Time (IST)
+          <input className="admp-input" style={{ marginBottom:0, width:'110px' }} type="time"
+            value={emailTime} onChange={e => setEmailTime(e.target.value)} />
+        </label>
+        <button className="admp-btn admp-btn-primary" onClick={saveSettings}>💾 Save Settings</button>
+        <button className="admp-btn admp-btn-success" disabled={sendingAll} onClick={sendAll}>
+          {sendingAll ? 'Sending…' : '📧 Send All Auth Links'}
+        </button>
+        {msg && <span className="admp-msg" style={{ margin:0 }}>{msg}</span>}
+      </div>
+      <div style={{ marginTop:'6px', fontSize:'11px', color:'#999' }}>
+        Auto-sends all links in <b>1 email</b> daily at <b>{emailTime} IST</b>. Click each link → token auto-saved.
+      </div>
+    </div>
+  );
+}
+
+// ── Schedule Tab (admin only) ────────────────────────────────────────────────
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function ScheduleTab({ adminToken }) {
+  const [days, setDays]         = useState([1,2,3,4,5]);
+  const [startTime, setStart]   = useState('08:59');
+  const [stopTime, setStop]     = useState('15:32');
+  const [enabled, setEnabled]   = useState(true);
+  const [msg, setMsg]           = useState('');
+
+  useEffect(() => {
+    ADMIN_API('/api/admin/schedule', adminToken)
+      .then(d => {
+        if (d.success) {
+          setDays(d.schedule?.days?.filter(x => typeof x === 'number') || [1,2,3,4,5]);
+          setStart(d.schedule?.start_time || '08:59');
+          setStop(d.schedule?.stop_time || '15:32');
+          setEnabled(d.enabled ?? true);
+        }
+      }).catch(() => {});
+  }, [adminToken]);
+
+  const toggleDay = d => setDays(prev =>
+    prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort()
+  );
+
+  const save = async () => {
+    setMsg('');
+    try {
+      const d = await ADMIN_API('/api/admin/schedule', adminToken, {
+        method: 'POST',
+        body: { schedule: { days, start_time: startTime, stop_time: stopTime }, enabled },
+      });
+      setMsg(d.message || (d.success ? 'Saved!' : 'Failed'));
+      setTimeout(() => setMsg(''), 3000);
+    } catch { setMsg('Error saving'); }
+  };
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">Update Schedule</span>
+        <label className="admp-toggle-label">
+          <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
+          <span className={`admp-pill ${enabled ? 'green' : 'red'}`}>{enabled ? 'Enabled' : 'Disabled'}</span>
+        </label>
+      </div>
+
+      <div className="admp-sched-body">
+        <div className="admp-sched-section">
+          <div className="admp-sched-label">Active Days</div>
+          <div className="admp-days-row">
+            {DAYS.map((d, i) => (
+              <button
+                key={d}
+                className={`admp-day-btn ${days.includes(i + 1) ? 'active' : ''}`}
+                onClick={() => toggleDay(i + 1)}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="admp-sched-section">
+          <div className="admp-sched-label">Time Range</div>
+          <div className="admp-time-row">
+            <label>
+              Start Time
+              <input className="admp-input admp-input-time" type="time" value={startTime} onChange={e => setStart(e.target.value)} />
+            </label>
+            <label>
+              Stop Time
+              <input className="admp-input admp-input-time" type="time" value={stopTime} onChange={e => setStop(e.target.value)} />
+            </label>
+          </div>
+        </div>
+
+        <button className="admp-btn admp-btn-primary" onClick={save}>Save Schedule</button>
+        {msg && <div className="admp-msg">{msg}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── Logs Tab (admin only) ────────────────────────────────────────────────────
+function LogsTab({ adminToken }) {
+  const [logs, setLogs]           = useState([]);
+  const [autoRefresh, setAuto]    = useState(true);
+  const [msg, setMsg]             = useState('');
+  const bottomRef                 = useRef(null);
+  const intervalRef               = useRef(null);
+
+  const fetchLogs = useCallback(async () => {
+    try {
+      const d = await ADMIN_API('/api/admin/logs?lines=100', adminToken);
+      if (d.success) setLogs(d.logs || []);
+    } catch {}
+  }, [adminToken]);
+
+  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+
+  useEffect(() => {
+    if (autoRefresh) intervalRef.current = setInterval(fetchLogs, 5000);
+    else clearInterval(intervalRef.current);
+    return () => clearInterval(intervalRef.current);
+  }, [autoRefresh, fetchLogs]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
+  const clearLogs = async () => {
+    try {
+      const d = await ADMIN_API('/api/admin/clear-logs', adminToken, { method: 'POST' });
+      setMsg(d.message || 'Cleared');
+      fetchLogs();
+      setTimeout(() => setMsg(''), 3000);
+    } catch { setMsg('Error'); }
+  };
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">Server Logs</span>
+        <div className="admp-tab-actions">
+          <label className="admp-toggle-label">
+            <input type="checkbox" checked={autoRefresh} onChange={e => setAuto(e.target.checked)} />
+            Auto-refresh
+          </label>
+          <button className="admp-btn admp-btn-outline admp-btn-sm" onClick={fetchLogs}>↻</button>
+          <button className="admp-btn admp-btn-warn admp-btn-sm" onClick={clearLogs}>Clear</button>
+        </div>
+      </div>
+      {msg && <div className="admp-msg">{msg}</div>}
+      <div className="admp-log-box">
+        {logs.length === 0
+          ? <span className="admp-log-empty">No logs</span>
+          : logs.map((line, i) => (
+            <div key={i} className={`admp-log-line ${line.includes('ERROR') || line.includes('❌') ? 'err' : line.includes('✅') ? 'ok' : ''}`}>
+              {line}
+            </div>
+          ))
+        }
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  );
+}
+
+// ── Team Tab (admin only) ─────────────────────────────────────────────────────
+const EMPTY_MEMBER = { name: '', designation: '', experience: '' };
+
+function TeamTab() {
+  const [members, setMembers]   = useState([]);
+  const [form, setForm]         = useState(EMPTY_MEMBER);
+  const [photo, setPhoto]       = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [editId, setEditId]     = useState(null);
+  const [saving, setSaving]     = useState(false);
+  const [msg, setMsg]           = useState('');
+  const fileRef                 = useRef(null);
+
+  const load = () => {
+    fetch('/api/team', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (d.success) setMembers(d.members || []); })
+      .catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
+
+  const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handlePhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhoto(file);
+    setPhotoPreview(URL.createObjectURL(file));
+  };
+
+  const resetForm = () => {
+    setForm(EMPTY_MEMBER); setPhoto(null); setPhotoPreview(null); setEditId(null);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const handleEdit = (m) => {
+    setForm({ name: m.name, designation: m.designation, experience: m.experience });
+    setPhotoPreview(m.hasPhoto ? `/api/team/photo/${m.id}?t=${Date.now()}` : null);
+    setPhoto(null); setEditId(m.id);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) { setMsg('Name is required'); return; }
+    setSaving(true); setMsg('');
+    const fd = new FormData();
+    fd.append('name', form.name);
+    fd.append('designation', form.designation);
+    fd.append('experience', form.experience);
+    if (photo) fd.append('photo', photo);
+    try {
+      const url = editId ? `/api/admin/team/${editId}` : '/api/admin/team';
+      const method = editId ? 'PUT' : 'POST';
+      const r = await fetch(url, { method, credentials: 'include', body: fd });
+      const d = await r.json();
+      if (d.success) { load(); resetForm(); setMsg(editId ? 'Updated!' : 'Member added!'); }
+      else setMsg(d.error || 'Save failed');
+    } catch { setMsg('Network error'); }
+    finally { setSaving(false); setTimeout(() => setMsg(''), 3000); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete this team member?')) return;
+    try {
+      const r = await fetch(`/api/admin/team/${id}`, { method: 'DELETE', credentials: 'include' });
+      const d = await r.json();
+      if (d.success) { setMembers(prev => prev.filter(m => m.id !== id)); if (editId === id) resetForm(); }
+    } catch {}
+  };
+
+  const initials = (name) => name ? name.trim().split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() : '?';
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">{editId ? 'Edit Team Member' : 'Add Team Member'}</span>
+        {editId && <button className="admp-btn admp-btn-outline" onClick={resetForm}>✕ Cancel Edit</button>}
+      </div>
+
+      {/* ── Form ── */}
+      <form className="team-form" onSubmit={handleSave}>
+        <div className="team-form-photo-col">
+          <div className="team-form-avatar" onClick={() => fileRef.current?.click()}>
+            {photoPreview
+              ? <img src={photoPreview} alt="" className="team-form-avatar-img" />
+              : <span className="team-form-avatar-init">{initials(form.name) || '+'}</span>
+            }
+            <div className="team-form-avatar-overlay">📷</div>
+          </div>
+          <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handlePhotoChange} />
+          <span className="team-form-photo-hint">Click to upload</span>
+        </div>
+        <div className="team-form-fields">
+          <div className="team-form-row">
+            <div className="admp-field">
+              <label>Name *</label>
+              <input className="admp-input" value={form.name} onChange={e => setF('name', e.target.value)} placeholder="Full name" required />
+            </div>
+            <div className="admp-field">
+              <label>Designation</label>
+              <input className="admp-input" value={form.designation} onChange={e => setF('designation', e.target.value)} placeholder="e.g. Sr. Analyst" />
+            </div>
+            <div className="admp-field">
+              <label>Experience</label>
+              <input className="admp-input" value={form.experience} onChange={e => setF('experience', e.target.value)} placeholder="e.g. 5+ years" />
+            </div>
+          </div>
+          <div className="team-form-actions">
+            <button type="submit" className="admp-btn admp-btn-primary" disabled={saving}>
+              {saving ? 'Saving...' : editId ? '💾 Update Member' : '➕ Add Member'}
+            </button>
+            {msg && <span className={`admp-inline-msg ${msg.includes('!') ? 'ok' : 'err'}`}>{msg}</span>}
+          </div>
+        </div>
+      </form>
+
+      {/* ── Cards Grid ── */}
+      <div className="admp-tab-header" style={{ marginTop: 24 }}>
+        <span className="admp-tab-title">Team Members <span className="admp-count">{members.length}</span></span>
+      </div>
+      {members.length === 0 ? (
+        <div className="admp-loading">No team members yet. Add the first one above.</div>
+      ) : (
+        <div className="team-cards-grid">
+          {members.map(m => (
+            <div key={m.id} className={`team-card${editId === m.id ? ' editing' : ''}`}>
+              <div className="team-card-avatar">
+                {m.hasPhoto
+                  ? <img src={`/api/team/photo/${m.id}?t=${Date.now()}`} alt={m.name} className="team-card-avatar-img" />
+                  : <span className="team-card-avatar-init">{initials(m.name)}</span>
+                }
+              </div>
+              <div className="team-card-name">{m.name}</div>
+              {m.designation && <div className="team-card-desig">{m.designation}</div>}
+              {m.experience && <div className="team-card-exp">🏆 {m.experience}</div>}
+              <div className="team-card-actions">
+                <button className="team-card-edit-btn" onClick={() => handleEdit(m)}>✏️ Edit</button>
+                <button className="team-card-del-btn" onClick={() => handleDelete(m.id)}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Notifications Tab (admin only) ───────────────────────────────────────────
+function NotificationsTab() {
+  const [notifs, setNotifs]     = useState([]);
+  const [title, setTitle]       = useState('');
+  const [message, setMessage]   = useState('');
+  const [file, setFile]         = useState(null);
+  const [fileName, setFileName] = useState('');
+  const [posting, setPosting]   = useState(false);
+  const [msg, setMsg]           = useState('');
+  const fileRef                 = useRef(null);
+
+  const load = () => {
+    fetch('/api/notifications', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (d.success) setNotifs(d.notifications || []); })
+      .catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
+
+  const handleFileChange = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setFileName(f.name);
+  };
+
+  const handlePost = async (e) => {
+    e.preventDefault();
+    if (!title.trim() && !message.trim()) { setMsg('Add a title or message'); return; }
+    setPosting(true); setMsg('');
+    const fd = new FormData();
+    fd.append('title', title);
+    fd.append('message', message);
+    if (file) fd.append('file', file);
+    try {
+      const r = await fetch('/api/admin/notifications', { method: 'POST', credentials: 'include', body: fd });
+      const d = await r.json();
+      if (d.success) {
+        load();
+        setTitle(''); setMessage(''); setFile(null); setFileName('');
+        if (fileRef.current) fileRef.current.value = '';
+        setMsg('Posted!');
+      } else setMsg(d.error || 'Failed');
+    } catch { setMsg('Network error'); }
+    finally { setPosting(false); setTimeout(() => setMsg(''), 3000); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete this notification?')) return;
+    const r = await fetch(`/api/admin/notifications/${id}`, { method: 'DELETE', credentials: 'include' });
+    const d = await r.json();
+    if (d.success) setNotifs(prev => prev.filter(n => n.id !== id));
+  };
+
+  const fmtDate = (iso) => new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">Post Notification</span>
+      </div>
+
+      <form className="notif-form" onSubmit={handlePost}>
+        <div className="admp-field" style={{ flex: 'none' }}>
+          <label>Title</label>
+          <input className="admp-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Notification title..." style={{ minWidth: 0 }} />
+        </div>
+        <div className="admp-field" style={{ flex: 'none' }}>
+          <label>Message</label>
+          <textarea className="notif-textarea" value={message} onChange={e => setMessage(e.target.value)} placeholder="Write your message here..." rows={4} />
+        </div>
+        <div className="notif-attach-row">
+          <button type="button" className="admp-btn admp-btn-outline" onClick={() => fileRef.current?.click()}>
+            📎 {fileName || 'Attach Image / PDF'}
+          </button>
+          {fileName && <button type="button" className="notif-clear-file" onClick={() => { setFile(null); setFileName(''); if (fileRef.current) fileRef.current.value = ''; }}>✕</button>}
+          <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" style={{ display: 'none' }} onChange={handleFileChange} />
+        </div>
+        <div className="team-form-actions">
+          <button type="submit" className="admp-btn admp-btn-primary" disabled={posting}>
+            {posting ? 'Posting...' : '📢 Post Notification'}
+          </button>
+          {msg && <span className={`admp-inline-msg ${msg === 'Posted!' ? 'ok' : 'err'}`}>{msg}</span>}
+        </div>
+      </form>
+
+      <div className="admp-tab-header" style={{ marginTop: 24 }}>
+        <span className="admp-tab-title">Posted Notifications <span className="admp-count">{notifs.length}</span></span>
+      </div>
+
+      {notifs.length === 0 ? (
+        <div className="admp-loading">No notifications yet.</div>
+      ) : (
+        <div className="notif-admin-list">
+          {notifs.map(n => (
+            <div key={n.id} className="notif-admin-item">
+              <div className="notif-admin-item-main">
+                {n.title && <div className="notif-admin-title">{n.title}</div>}
+                {n.message && <div className="notif-admin-msg">{n.message}</div>}
+                <div className="notif-admin-meta">
+                  {fmtDate(n.createdAt)}
+                  {n.hasFile && <span className="notif-admin-badge">{n.fileType === 'application/pdf' ? '📄 PDF' : '🖼 Image'}</span>}
+                </div>
+              </div>
+              <button className="tj-del-btn" onClick={() => handleDelete(n.id)} title="Delete">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── AI Train Tab ─────────────────────────────────────────────────────────────
+function AITrainTab() {
+  const [status,   setStatus]   = useState(null);
+  const [running,  setRunning]  = useState(false);
+  const [msg,      setMsg]      = useState('');
+  const [summary,  setSummary]  = useState(null);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const d = await API('/api/trainai/status');
+      setStatus(d.status);
+      if (!d.status?.running) setRunning(false);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    loadStatus();
+    const id = setInterval(loadStatus, 4000);
+    return () => clearInterval(id);
+  }, [loadStatus]);
+
+  const runAI = async (force) => {
+    setRunning(true); setMsg('');
+    try {
+      const d = await API('/api/trainai/run', {
+        method: 'POST', body: { force },
+      });
+      setMsg(d.message || (d.success ? 'Started!' : 'Failed'));
+      if (d.success) {
+        const poll = setInterval(async () => {
+          const s = await API('/api/trainai/status');
+          if (!s.status?.running) {
+            clearInterval(poll);
+            setRunning(false);
+            const r = s.status?.last_result;
+            setMsg(`Done! ${r?.analyzed || 0} days analyzed, ${r?.skipped || 0} skipped, ${r?.errors || 0} errors.`);
+          }
+        }, 3000);
+      }
+    } catch { setMsg('Error'); setRunning(false); }
+    setTimeout(() => setMsg(''), 10000);
+  };
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">AI Train — Pattern Analysis</span>
+      </div>
+      <div className="admp-sys-grid">
+        <div className="admp-sys-card">
+          <div className="admp-sys-label">Engine Status</div>
+          <div className="admp-sys-val">
+            <span className={`admp-dot ${running ? 'green' : 'grey'}`} style={{ marginRight: 8 }} />
+            {running ? 'Analyzing…' : status?.last_run
+              ? `Last run: ${new Date(status.last_run).toLocaleString('en-IN', { hour12: false, dateStyle: 'short', timeStyle: 'short' })}`
+              : 'Never run'}
+          </div>
+          {status?.last_result && (
+            <div className="admp-sys-meta">
+              <span>Analyzed: <b>{status.last_result.analyzed}</b></span>
+              <span>Skipped: <b>{status.last_result.skipped}</b></span>
+              <span>Errors: <b>{status.last_result.errors}</b></span>
+            </div>
+          )}
+          <div className="admp-sys-btns" style={{ gap: 8 }}>
+            <button
+              className="admp-btn admp-btn-success"
+              onClick={() => runAI(false)}
+              disabled={running}
+            >
+              {running ? '⟳ Running…' : '▶ Run AI Analysis'}
+            </button>
+            <button
+              className="admp-btn admp-btn-outline"
+              onClick={() => runAI(true)}
+              disabled={running}
+              title="Force re-analyze all dates"
+            >
+              ↺ Force All
+            </button>
+          </div>
+          {msg && <div className="admp-msg">{msg}</div>}
+        </div>
+        <div className="admp-sys-card">
+          <div className="admp-sys-label">How It Works</div>
+          <div className="admp-sys-meta" style={{ lineHeight: 1.8 }}>
+            <span>✦ Reads all your option chain snapshots</span>
+            <span>✦ Computes PCR, OI shifts, IV skew, writing signals</span>
+            <span>✦ Compares indicators to price moves 10-30 min later</span>
+            <span>✦ Finds patterns that predict direction with X min lead</span>
+            <span>✦ Saves <code>_trainai.json</code> in each date folder</span>
+            <span>✦ Auto-runs at 15:35 IST after market close</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Indicators Tab ────────────────────────────────────────────────────────────
+const ROLE_COLS = [
+  { key: 'admin',  label: 'Admin',  color: '#b71c1c' },
+  { key: 'member', label: 'Member', color: '#1565c0' },
+  { key: 'user',   label: 'User',   color: '#2e7d32' },
+];
+
+function IndicatorsTab() {
+  const [indicators, setIndicators] = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [saving,     setSaving]     = useState(false);
+  const [msg,        setMsg]        = useState('');
+
+  useEffect(() => {
+    API('/api/indicators')
+      .then(d => { if (d.success) setIndicators(d.indicators || []); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const toggle = (id, role) => {
+    setIndicators(prev => prev.map(ind =>
+      ind.id === id ? { ...ind, [role]: !ind[role] } : ind
+    ));
+  };
+
+  const save = async () => {
+    setSaving(true); setMsg('');
+    try {
+      const d = await API('/api/indicators', { method: 'POST', body: { indicators } });
+      setMsg(d.message || (d.success ? 'Saved!' : 'Failed'));
+    } catch { setMsg('Error saving'); }
+    setSaving(false);
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  if (loading) return <div className="admp-loading">Loading indicators…</div>;
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">Indicator Access Control</span>
+        <div className="admp-tab-actions">
+          <button className="admp-btn admp-btn-primary" onClick={save} disabled={saving}>
+            {saving ? '…' : '💾 Save'}
+          </button>
+        </div>
+      </div>
+      {msg && <div className="admp-msg">{msg}</div>}
+      <div className="admp-table-wrap">
+        <table className="admp-table">
+          <thead>
+            <tr>
+              <th>Indicator</th>
+              <th>Description</th>
+              {ROLE_COLS.map(r => (
+                <th key={r.key} style={{ color: r.color, textAlign: 'center' }}>{r.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {indicators.map(ind => (
+              <tr key={ind.id}>
+                <td className="admp-name" style={{ fontWeight: 700 }}>{ind.name}</td>
+                <td style={{ fontSize: 12, opacity: 0.65 }}>{ind.desc}</td>
+                {ROLE_COLS.map(r => (
+                  <td key={r.key} style={{ textAlign: 'center' }}>
+                    {r.key === 'admin'
+                      ? <span style={{ opacity: 0.4 }}>✓</span>
+                      : (
+                        <input
+                          type="checkbox"
+                          checked={!!ind[r.key]}
+                          onChange={() => toggle(ind.id, r.key)}
+                          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: r.color }}
+                        />
+                      )
+                    }
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11, opacity: 0.5, padding: '10px 0' }}>
+        Admin always has full access. Toggle Member and User access per indicator.
+      </div>
+    </div>
+  );
+}
+
+// ── Main AdminPanel ──────────────────────────────────────────────────────────
+const TABS_ADMIN  = ['Users', 'Team', 'Notifications', 'Indicators', 'AI Train', 'Meet', 'System', 'Schedule', 'Logs'];
+
+// ── Meet Tab ─────────────────────────────────────────────────────────────────
+function MeetTab() {
+  const [links, setLinks]   = useState({ public_meet: '', community_meet: '' });
+  const [msg, setMsg]       = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/meet-links', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (d.success) setLinks(d.links); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async (e) => {
+    e.preventDefault();
+    const d = await API('/api/admin/meet-links', { method: 'POST', body: links });
+    setMsg(d.success ? '✅ Meet links saved!' : `❌ ${d.error || 'Failed'}`);
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  if (loading) return <div className="admp-tab"><div className="admp-empty">Loading…</div></div>;
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-section-title">📹 Meet Links</div>
+      <form onSubmit={save} style={{ maxWidth: 520 }}>
+        <div style={{ marginBottom: 16 }}>
+          <label className="admp-label">Public Meet Link (7PM–8PM Daily)</label>
+          <input
+            className="admp-input"
+            type="url"
+            placeholder="https://meet.google.com/..."
+            value={links.public_meet}
+            onChange={e => setLinks(l => ({ ...l, public_meet: e.target.value }))}
+          />
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label className="admp-label">Community Meet Link (Members Only)</label>
+          <input
+            className="admp-input"
+            type="url"
+            placeholder="https://meet.google.com/..."
+            value={links.community_meet}
+            onChange={e => setLinks(l => ({ ...l, community_meet: e.target.value }))}
+          />
+        </div>
+        <button className="admp-btn admp-btn-primary" type="submit">Save Links</button>
+        {msg && <div className={`admp-msg ${msg.startsWith('✅') ? 'success' : 'error'}`} style={{ marginTop: 12 }}>{msg}</div>}
+      </form>
+    </div>
+  );
+}
+const TABS_MEMBER = ['Users', 'AI Train'];
+
+export default function AdminPanel() {
+  useBodyScroll();
+  const { state } = useApp();
+  const userRole  = state.user?.role || 'user';
+  const isAdmin   = userRole === 'admin';
+
+  const tabs = isAdmin ? TABS_ADMIN : TABS_MEMBER;
+  const [activeTab, setActiveTab] = useState('Users');
+
+  // Admin system token (needed for admin-only API routes)
+  const [adminToken, setAdminToken]     = useState(() => localStorage.getItem('adminToken') || '');
+  const [tokenInput, setTokenInput]     = useState('');
+  const [tokenError, setTokenError]     = useState('');
+  const [tokenChecked, setTokenChecked] = useState(false);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    if (!adminToken) { setTokenChecked(true); return; }
+    ADMIN_API('/api/admin/status', adminToken)
+      .then(d => {
+        if (!d.success) { localStorage.removeItem('adminToken'); setAdminToken(''); }
+        setTokenChecked(true);
+      })
+      .catch(() => { setTokenChecked(true); });
+  }, [isAdmin, adminToken]);
+
+  const handleTokenLogin = async (e) => {
+    e.preventDefault();
+    setTokenError('');
+    try {
+      const parts = tokenInput.includes(':') ? tokenInput.split(':') : null;
+      if (!parts) { setTokenError('Format: username:password'); return; }
+      const d = await fetch('/api/admin/login', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: parts[0], password: parts[1] }),
+      }).then(r => r.json());
+      if (d.success) {
+        localStorage.setItem('adminToken', d.token);
+        setAdminToken(d.token);
+        setTokenInput('');
+      } else {
+        setTokenError(d.message || 'Invalid credentials');
+      }
+    } catch { setTokenError('Network error'); }
+  };
+
+  // For admin tabs that need system token, show a login prompt if token missing
+  const needsToken = isAdmin && ['System', 'Schedule', 'Logs'].includes(activeTab);
+  const isAdminOrMember = isAdmin || userRole === 'member';
+
+
+  return (
+    <div className="admp-page">
+
+      {/* ── Header ── */}
+      <div className="admp-header">
+        <div className="admp-header-left">
+          <span className="admp-header-icon">⚙️</span>
+          <div>
+            <div className="admp-header-title">Admin Panel</div>
+            <div className="admp-header-sub">
+              {isAdmin ? 'Full access' : 'Member — read-only'}
+            </div>
+          </div>
+        </div>
+        <div className="admp-header-role">
+          <span className="admp-role-badge-lg" style={{ background: ROLE_COLORS[userRole] }}>
+            {ROLE_LABELS[userRole]}
+          </span>
+          <span className="admp-header-user">{state.user?.name || state.user?.email || ''}</span>
+        </div>
+      </div>
+
+      {/* ── Tab bar ── */}
+      <div className="admp-tabs">
+        {tabs.map(tab => (
+          <button
+            key={tab}
+            className={`admp-tab-btn${activeTab === tab ? ' active' : ''}`}
+            onClick={() => setActiveTab(tab)}
+          >
+            {tab === 'Users' && '👥 '}
+            {tab === 'Team' && '🤝 '}
+            {tab === 'Notifications' && '🔔 '}
+            {tab === 'Indicators' && '🎛️ '}
+            {tab === 'AI Train' && '🧠 '}
+            {tab === 'Meet' && '📹 '}
+            {tab === 'System' && '🖥️ '}
+            {tab === 'Schedule' && '🕐 '}
+            {tab === 'Logs' && '📋 '}
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Content ── */}
+      <div className="admp-content">
+        {activeTab === 'Users' && <UsersTab isAdmin={isAdmin} />}
+        {isAdmin && activeTab === 'Team' && <TeamTab />}
+        {isAdmin && activeTab === 'Notifications' && <NotificationsTab />}
+        {isAdmin && activeTab === 'Indicators' && <IndicatorsTab />}
+        {isAdminOrMember && activeTab === 'AI Train' && <AITrainTab />}
+        {isAdmin && activeTab === 'Meet' && <MeetTab />}
+
+        {isAdmin && needsToken && !adminToken && tokenChecked && (
+          <div className="admp-tab">
+            <div className="admp-token-login">
+              <div className="admp-token-login-title">System Access Required</div>
+              <div className="admp-token-login-sub">Enter your admin credentials to access system settings</div>
+              <form onSubmit={handleTokenLogin} className="admp-token-form">
+                <input
+                  className="admp-input"
+                  placeholder="username:password"
+                  value={tokenInput}
+                  onChange={e => setTokenInput(e.target.value)}
+                  type="password"
+                />
+                <button className="admp-btn admp-btn-primary" type="submit">Unlock</button>
+              </form>
+              {tokenError && <div className="admp-msg error">{tokenError}</div>}
+            </div>
+          </div>
+        )}
+
+        {isAdmin && activeTab === 'System'   && adminToken && <SystemTab   adminToken={adminToken} />}
+        {isAdmin && activeTab === 'Schedule' && adminToken && <ScheduleTab adminToken={adminToken} />}
+        {isAdmin && activeTab === 'Logs'     && adminToken && <LogsTab     adminToken={adminToken} />}
+      </div>
+    </div>
+  );
+}
