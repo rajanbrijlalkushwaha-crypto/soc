@@ -352,6 +352,7 @@ app.use(session({
     httpOnly: true,
     secure: false, // Change to true with HTTPS
     sameSite: "lax",
+    domain: process.env.COOKIE_DOMAIN || undefined, // e.g. .soc.ai.in for subdomains
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   },
   rolling: true // Reset expiry on activity
