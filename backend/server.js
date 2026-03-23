@@ -392,19 +392,13 @@ app.use("/api/auth", authRoutes);
 const { sendUpstoxAuthEmail } = require('./emailService/emailService');
 
 // ── Global API auth guard ────────────────────────────────────────────────────
-// All /api/* routes (except /api/auth/*) require:
-//   1. X-Requested-By: soc-app  — blocks direct browser URL / curl access
-//   2. A valid login session
+// All /api/* routes (except /api/auth/* and /api/admin/*) require a valid login session
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth/'))  return next();
   if (req.path.startsWith('/admin/')) return next(); // admin routes use Bearer token auth
 
-  if (req.headers['x-requested-by'] !== 'soc-app') {
-    return res.status(401).json({ success: false, error: 'Token error: direct access not allowed' });
-  }
-
   if (!req.session?.userId || !req.session?.userVerified) {
-    return res.status(401).json({ success: false, error: 'Token error: session required' });
+    return res.status(401).json({ success: false, error: 'Session required' });
   }
 
   return next();
