@@ -12,9 +12,12 @@
 # Ignore inside frontend/backend
 frontend/node_modules/
 backend/node_modules/
+frontend/build/
 
+# Env and data (never commit secrets or generated data)
 frontend/.env
 backend/.env
+data/
 
 # Mac file
 .DS_Store
