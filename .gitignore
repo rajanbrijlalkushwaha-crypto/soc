@@ -1,23 +1,24 @@
-# Ignore everything
-*
-
-# Allow these folders
-!frontend/
-!backend/
-
-# Allow files inside them
-!frontend/**
-!backend/**
-
-# Ignore inside frontend/backend
+# node_modules
 frontend/node_modules/
 backend/node_modules/
+node_modules/
+
+# frontend build (always build on server)
 frontend/build/
 
-# Env and data (never commit secrets or generated data)
+# env files (secrets)
 frontend/.env
 backend/.env
-data/
+
+# generated data (sessions, market files, users)
+data/sessions/
+data/market/
+data/users/
+data/logs/
+data/notifications/
+data/team/
+data/config/
 
 # Mac file
 .DS_Store
+*.zip
