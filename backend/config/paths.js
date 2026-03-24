@@ -48,6 +48,7 @@ const PATHS = {
   MARKET_TIMING:    path.join(DATA_ROOT, 'config', 'markettiming.json'),
   UPSTOX_APPS:      path.join(DATA_ROOT, 'config', 'upstox_apps.json'),
   INDICATOR_ACCESS: path.join(DATA_ROOT, 'config', 'indicator_access.json'),
+  INSTRUMENTS_CFG:  path.join(DATA_ROOT, 'config', 'instruments.json'),
 };
 
 // ── Auto-create all directories on first require ──────────────────────────────

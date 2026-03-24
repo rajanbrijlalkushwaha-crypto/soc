@@ -2316,27 +2316,35 @@ app.get("/api/instruments/master/mcx", (req, res) => {
   }
 });
 
-// POST /api/instruments/active - Update active instruments list
+// GET /api/instruments/active - Get current active instruments
+app.get("/api/instruments/active", authenticateAdmin, (_req, res) => {
+  res.json({ success: true, instruments: CONFIG.INSTRUMENTS });
+});
+
+// POST /api/instruments/active - Update active instruments list (persists to disk)
 app.post("/api/instruments/active", authenticateAdmin, (req, res) => {
   try {
     const { instruments } = req.body;
-    
+
     if (!instruments || !Array.isArray(instruments) || instruments.length === 0) {
       return res.status(400).json({
         success: false,
         message: "Provide an array of instrument keys"
       });
     }
-    
+
     CONFIG.INSTRUMENTS = instruments;
-    
+
+    // Persist so selection survives server restart
+    fs.writeFileSync(PATHS.INSTRUMENTS_CFG, JSON.stringify({ instruments }, null, 2));
+
     // Restart fetching if running
     const wasRunning = !!serverState.autoRefreshInterval;
     if (wasRunning) {
       stopFetching();
       startFetching(serverState.isScheduledRunning);
     }
-    
+
     res.json({
       success: true,
       message: `Active instruments updated to ${instruments.length} instruments`,
@@ -2760,6 +2768,20 @@ async function startServer() {
     ensureDirectoryExists(baseDataDir);
     
     loadScheduleFromFile();
+
+    // Load saved instruments selection (if admin changed it via UI)
+    try {
+      if (fs.existsSync(PATHS.INSTRUMENTS_CFG)) {
+        const saved = JSON.parse(fs.readFileSync(PATHS.INSTRUMENTS_CFG, 'utf8'));
+        if (Array.isArray(saved.instruments) && saved.instruments.length > 0) {
+          CONFIG.INSTRUMENTS = saved.instruments;
+          log(`📊 Loaded ${CONFIG.INSTRUMENTS.length} instruments from saved config`);
+        }
+      }
+    } catch (e) {
+      log(`⚠️ Could not load instruments config: ${e.message}`);
+    }
+
     await initMarketData();
     startTokenScheduler();
 
