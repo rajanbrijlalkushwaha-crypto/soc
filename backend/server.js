@@ -44,48 +44,38 @@ const CONFIG = {
   // NOTE: MCX Option Chain is NOT supported by Upstox Put/Call API
   // NOTE: Individual stocks use NSE_EQ segment for option chain (underlying_key)
   
-  // Active instruments to fetch option chain data for (add/remove as needed)
+  // Active instruments — all enabled by default, managed via Admin Panel > System tab
+  // Do NOT edit manually. Use Admin Panel to activate/deactivate stocks.
   INSTRUMENTS: [
-    // --- NSE Indices (Option Chain Supported) ---
+    // NSE Indices
     "NSE_INDEX|Nifty 50",
     "NSE_INDEX|Nifty Bank",
     "NSE_INDEX|NIFTY MID SELECT",
-    //"NSE_INDEX|Nifty Next 50",
-    //"NSE_INDEX|Nifty Financial Services",
-
-    // --- BSE Indices (Option Chain Supported) ---
+    "NSE_INDEX|Nifty Next 50",
+    "NSE_INDEX|Nifty Financial Services",
+    // BSE Indices
     "BSE_INDEX|SENSEX",
     "BSE_INDEX|BANKEX",
-    //"BSE_INDEX|SENSEX 50",
-
-    // --- NSE F&O Stocks (uncomment to enable) ---
-    // Top by OI/Volume:
-    // Files will be saved with stock symbol names (e.g., RELIANCE, INFY) for easy identification
-    "NSE_EQ|INE002A01018",   // Reliance Industries (saves as: RELIANCE)
-     "NSE_EQ|INE009A01021",   // Infosys (saves as: INFY)
-     "NSE_EQ|INE467B01029",   // Tata Consultancy Services - TCS
-    "NSE_EQ|INE040A01034",   // HDFC Bank - HDFCBANK
-   "NSE_EQ|INE090A01021",   // ICICI Bank - ICICIBANK
-    "NSE_EQ|INE585B01010",   // Maruti Suzuki - MARUTI
-    "NSE_EQ|INE155A01022",   // Tata Motors - TATAMTRS
-    "NSE_EQ|INE062A01020",   // State Bank of India - SBIN
-    "NSE_EQ|INE154A01025",   // ITC - ITC
-    "NSE_EQ|INE669E01016",   // Vodafone Idea - IDEA
-    // "NSE_EQ|INE528G01035",   // Bajaj Finance - BAJFINANCE
-    // "NSE_EQ|INE018A01030",   // Larsen & Toubro - LT
-  //   "NSE_EQ|INE114A01011",   // Axis Bank - AXISBANK
-    // "NSE_EQ|INE101A01026",   // NTPC - NTPC
-    // "NSE_EQ|INE160A01022",   // Sun Pharma - SUNPHARMA
-    // "NSE_EQ|INE176A01028",   // Coal India - COALINDIA
-    // "NSE_EQ|INE117A01022",   // ABB India - ABB
-    // "NSE_EQ|INE397D01024",   // Bharat Electronics - BEL
-    "NSE_EQ|INE121A01024",   // Adani Enterprises - ADANIENT
-    // "NSE_EQ|INE752E01010",   // Power Grid Corp - POWERGRID
-
-
-    //MCX
-
-    //"MCX_FO|GOLD",
+    // NSE F&O Stocks
+    "NSE_EQ|INE002A01018",   // RELIANCE
+    "NSE_EQ|INE009A01021",   // INFY
+    "NSE_EQ|INE467B01029",   // TCS
+    "NSE_EQ|INE040A01034",   // HDFCBANK
+    "NSE_EQ|INE090A01021",   // ICICIBANK
+    "NSE_EQ|INE585B01010",   // MARUTI
+    "NSE_EQ|INE155A01022",   // TATAMTRS
+    "NSE_EQ|INE062A01020",   // SBIN
+    "NSE_EQ|INE154A01025",   // ITC
+    "NSE_EQ|INE669E01016",   // IDEA
+    "NSE_EQ|INE528G01035",   // BAJFINANCE
+    "NSE_EQ|INE018A01030",   // LT
+    "NSE_EQ|INE114A01011",   // AXISBANK
+    "NSE_EQ|INE101A01026",   // NTPC
+    "NSE_EQ|INE160A01022",   // SUNPHARMA
+    "NSE_EQ|INE176A01028",   // COALINDIA
+    "NSE_EQ|INE397D01024",   // BEL
+    "NSE_EQ|INE121A01024",   // ADANIENT
+    "NSE_EQ|INE752E01010",   // POWERGRID
   ],
 
   // ============ FULL INSTRUMENT REFERENCE (for admin UI / search) ============

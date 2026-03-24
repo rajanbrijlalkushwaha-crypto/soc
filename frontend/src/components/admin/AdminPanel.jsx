@@ -339,8 +339,8 @@ function SystemTab({ adminToken }) {
       <div style={{ marginTop: 28 }}>
         <div className="admp-tab-header">
           <span className="admp-tab-title">
-            Active Instruments
-            <span className="admp-count" style={{ marginLeft: 8 }}>{activeKeys.size} selected</span>
+            Instruments
+            <span className="admp-count" style={{ marginLeft: 8 }}>{activeKeys.size} active</span>
           </span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
@@ -360,29 +360,57 @@ function SystemTab({ adminToken }) {
           </div>
         </div>
         {instrMsg && <div className="admp-msg" style={{ marginBottom: 10 }}>{instrMsg}</div>}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-          {filtered.map(inst => {
-            const active = activeKeys.has(inst.key);
-            return (
-              <div
-                key={inst.key}
-                onClick={() => toggleInstrument(inst.key)}
-                style={{
-                  padding: '6px 14px', borderRadius: 20, cursor: 'pointer',
-                  border: `1.5px solid ${active ? '#1976d2' : '#ccc'}`,
-                  background: active ? '#1976d2' : 'transparent',
-                  color: active ? '#fff' : '#555',
-                  fontSize: 13, fontWeight: 600, userSelect: 'none',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {inst.symbol}
-                <span style={{ fontSize: 10, opacity: 0.7, marginLeft: 4 }}>
-                  {inst.sector || inst.category || ''}
-                </span>
-              </div>
-            );
-          })}
+        <div className="admp-table-wrap" style={{ marginTop: 8 }}>
+          <table className="admp-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Symbol</th>
+                <th>Name</th>
+                <th>Segment</th>
+                <th>Sector</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((inst, i) => {
+                const active = activeKeys.has(inst.key);
+                return (
+                  <tr key={inst.key}>
+                    <td style={{ color: '#999', fontSize: 12 }}>{i + 1}</td>
+                    <td><b>{inst.symbol}</b></td>
+                    <td style={{ fontSize: 12 }}>{inst.name}</td>
+                    <td style={{ fontSize: 11, color: '#888' }}>{inst.segment || inst.category}</td>
+                    <td style={{ fontSize: 11, color: '#888' }}>{inst.sector || '—'}</td>
+                    <td>
+                      <span style={{
+                        padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700,
+                        background: active ? '#e8f5e9' : '#ffeee8',
+                        color: active ? '#2e7d32' : '#c62828',
+                      }}>
+                        {active ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => toggleInstrument(inst.key)}
+                        style={{
+                          padding: '4px 14px', borderRadius: 6, cursor: 'pointer',
+                          border: `1.5px solid ${active ? '#c62828' : '#2e7d32'}`,
+                          background: active ? '#ffeee8' : '#e8f5e9',
+                          color: active ? '#c62828' : '#2e7d32',
+                          fontSize: 12, fontWeight: 700,
+                        }}
+                      >
+                        {active ? 'Deactivate' : 'Activate'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
