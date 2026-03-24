@@ -229,10 +229,13 @@ function SystemTab({ adminToken }) {
     setInstrLoading(false);
   };
 
-  const filtered = masterList.filter(i =>
-    !search || i.symbol?.toLowerCase().includes(search.toLowerCase()) ||
-    i.name?.toLowerCase().includes(search.toLowerCase())
-  );
+  // Only show instruments that support option chain (others can't be fetched)
+  const filtered = masterList
+    .filter(i => i.hasOptionChain !== false)
+    .filter(i =>
+      !search || i.symbol?.toLowerCase().includes(search.toLowerCase()) ||
+      i.name?.toLowerCase().includes(search.toLowerCase())
+    );
 
   const startFetching = async () => {
     setActionLoading(true);
