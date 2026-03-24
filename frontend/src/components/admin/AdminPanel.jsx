@@ -176,6 +176,13 @@ function SystemTab({ adminToken }) {
   const [token2Val, setToken2Val]       = useState('');
   const [token2Msg, setToken2Msg]       = useState('');
 
+  // Instruments state
+  const [masterList, setMasterList]     = useState([]);
+  const [activeKeys, setActiveKeys]     = useState(new Set());
+  const [instrMsg, setInstrMsg]         = useState('');
+  const [instrLoading, setInstrLoading] = useState(false);
+  const [search, setSearch]             = useState('');
+
   const fetchStatus = useCallback(async () => {
     try {
       const d = await ADMIN_API('/api/admin/status', adminToken);
@@ -183,11 +190,49 @@ function SystemTab({ adminToken }) {
     } catch {}
   }, [adminToken]);
 
+  const fetchInstruments = useCallback(async () => {
+    try {
+      const [masterRes, activeRes] = await Promise.all([
+        ADMIN_API('/api/instruments/master', adminToken),
+        ADMIN_API('/api/instruments/active', adminToken),
+      ]);
+      if (masterRes.success) setMasterList(masterRes.all || []);
+      if (activeRes.success) setActiveKeys(new Set(activeRes.instruments || []));
+    } catch {}
+  }, [adminToken]);
+
   useEffect(() => {
     fetchStatus();
+    fetchInstruments();
     const id = setInterval(fetchStatus, 8000);
     return () => clearInterval(id);
-  }, [fetchStatus]);
+  }, [fetchStatus, fetchInstruments]);
+
+  const toggleInstrument = (key) => {
+    setActiveKeys(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
+
+  const saveInstruments = async () => {
+    setInstrLoading(true);
+    setInstrMsg('');
+    try {
+      const d = await ADMIN_API('/api/instruments/active', adminToken, {
+        method: 'POST',
+        body: { instruments: [...activeKeys] },
+      });
+      setInstrMsg(d.success ? `✅ Saved ${[...activeKeys].length} instruments` : '❌ ' + d.message);
+    } catch { setInstrMsg('❌ Error saving'); }
+    setInstrLoading(false);
+  };
+
+  const filtered = masterList.filter(i =>
+    !search || i.symbol?.toLowerCase().includes(search.toLowerCase()) ||
+    i.name?.toLowerCase().includes(search.toLowerCase())
+  );
 
   const startFetching = async () => {
     setActionLoading(true);
@@ -289,6 +334,57 @@ function SystemTab({ adminToken }) {
 
       {/* ── Upstox API Keys Manager ── */}
       <UpstoxAppsPanel adminToken={adminToken} />
+
+      {/* ── Instruments Manager ── */}
+      <div style={{ marginTop: 28 }}>
+        <div className="admp-tab-header">
+          <span className="admp-tab-title">
+            Active Instruments
+            <span className="admp-count" style={{ marginLeft: 8 }}>{activeKeys.size} selected</span>
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              className="admp-input"
+              placeholder="Search symbol / name..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ width: 200 }}
+            />
+            <button
+              className="admp-btn admp-btn-success"
+              onClick={saveInstruments}
+              disabled={instrLoading || activeKeys.size === 0}
+            >
+              {instrLoading ? 'Saving...' : '💾 Save & Apply'}
+            </button>
+          </div>
+        </div>
+        {instrMsg && <div className="admp-msg" style={{ marginBottom: 10 }}>{instrMsg}</div>}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+          {filtered.map(inst => {
+            const active = activeKeys.has(inst.key);
+            return (
+              <div
+                key={inst.key}
+                onClick={() => toggleInstrument(inst.key)}
+                style={{
+                  padding: '6px 14px', borderRadius: 20, cursor: 'pointer',
+                  border: `1.5px solid ${active ? '#1976d2' : '#ccc'}`,
+                  background: active ? '#1976d2' : 'transparent',
+                  color: active ? '#fff' : '#555',
+                  fontSize: 13, fontWeight: 600, userSelect: 'none',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {inst.symbol}
+                <span style={{ fontSize: 10, opacity: 0.7, marginLeft: 4 }}>
+                  {inst.sector || inst.category || ''}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
