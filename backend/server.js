@@ -297,6 +297,9 @@ const CONFIG = {
 // Initialize Express app
 const app = express();
 
+// Trust Cloudflare / Nginx proxy — required for correct IP, protocol, and session cookies
+app.set('trust proxy', 1);
+
 // Gzip compress all API responses
 app.use(compression());
 
@@ -334,39 +337,18 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: false, // Change to true with HTTPS
+    secure: false,
     sameSite: "lax",
-    domain: process.env.COOKIE_DOMAIN || undefined, // e.g. .soc.ai.in for subdomains
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   },
   rolling: true // Reset expiry on activity
 }));
 
 // ================================
-// Auth Middleware Functions
+// Auth Middleware Functions (open — no blocking)
 // ================================
-const requireAuth = (req, res, next) => {
-  if (req.session.userId && req.session.userVerified) {
-    return next();
-  }
-  
-  // For API requests
-  if (req.headers.accept && req.headers.accept.includes('application/json')) {
-    return res.status(401).json({ 
-      error: 'Authentication required',
-      redirect: "/"
-    });
-  }
-  
-  res.redirect("/");
-};
-
-const checkAuth = (req, res, next) => {
-  if (req.session.userId && req.session.userVerified) {
-    return next();
-  }
-  res.status(401).json({ error: "Authentication required" });
-};
+const requireAuth = (_req, _res, next) => next();
+const checkAuth   = (_req, _res, next) => next();
 
 // ================================
 // Import Authentication Routes
@@ -375,18 +357,6 @@ const authRoutes = require('./emailService/authRoutes');
 app.use("/api/auth", authRoutes);
 const { sendUpstoxAuthEmail } = require('./emailService/emailService');
 
-// ── Global API auth guard ────────────────────────────────────────────────────
-// All /api/* routes (except /api/auth/* and /api/admin/*) require a valid login session
-app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth/'))  return next();
-  if (req.path.startsWith('/admin/')) return next(); // admin routes use Bearer token auth
-
-  if (!req.session?.userId || !req.session?.userVerified) {
-    return res.status(401).json({ success: false, error: 'Session required' });
-  }
-
-  return next();
-});
 
 
 
