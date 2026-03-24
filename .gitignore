@@ -1,42 +1,20 @@
-# ── Dependencies ──────────────────────────────────────────────────────────────
-node_modules/
+# Ignore everything
+*
+
+# Allow these folders
+!frontend/
+!backend/
+
+# Allow files inside them
+!frontend/**
+!backend/**
+
+# Ignore inside frontend/backend
 frontend/node_modules/
+backend/node_modules/
 
-# ── Runtime data (NEVER commit) ───────────────────────────────────────────────
-data/
-DATA/
+frontend/.env
+backend/.env
 
-# ── User data (old location — do not commit) ──────────────────────────────────
-users/
-pending_users/
-sessions/
-teammember/
-
-# ── Secrets ───────────────────────────────────────────────────────────────────
-.env
-.env.local
-.env.production
-
-# ── Runtime config files at root (will move to data/config/) ──────────────────
-upstox_apps.json
-indicator_access.json
-schedule.json
-
-# ── Build output ──────────────────────────────────────────────────────────────
-frontend/build/
-
-# ── Logs ──────────────────────────────────────────────────────────────────────
-logs/
-*.log
-
-# ── OS / Editor ───────────────────────────────────────────────────────────────
+# Mac file
 .DS_Store
-Thumbs.db
-.vscode/
-*.swp
-*.swo
-
-# ── Backup/temp files ─────────────────────────────────────────────────────────
-*copy*
-*.zip
-untitled*
