@@ -1995,6 +1995,24 @@ app.put('/api/admin/upstox-apps/:id', authenticateAdmin, (req, res) => {
   res.json({ success: true, message: 'Saved' });
 });
 
+// ── PATCH /api/admin/upstox-apps/:id/token (manually set access token) ───────
+app.patch('/api/admin/upstox-apps/:id/token', authenticateAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const { access_token } = req.body;
+  if (access_token === undefined) return res.status(400).json({ success: false, message: 'access_token required' });
+  const apps = loadApps();
+  const idx  = apps.findIndex(a => a.id === id);
+  if (idx < 0) return res.status(404).json({ success: false, message: 'App not found' });
+  apps[idx].access_token = access_token || '';
+  saveApps(apps);
+  // sync primary tokens
+  const active = apps.filter(a => a.access_token);
+  if (active[0]) { CONFIG.ACCESS_TOKEN   = active[0].access_token; updateEnvKey('ACCESS_TOKEN',   active[0].access_token); }
+  if (active[1]) { CONFIG.ACCESS_TOKEN_2 = active[1].access_token; updateEnvKey('ACCESS_TOKEN_2', active[1].access_token); }
+  log(`✅ Token manually set for app: ${apps[idx].name} (id=${id}) — token ${access_token ? 'saved' : 'cleared'}`);
+  res.json({ success: true, message: access_token ? 'Token saved!' : 'Token cleared' });
+});
+
 // ── DELETE /api/admin/upstox-apps/:id ────────────────────────────────────────
 app.delete('/api/admin/upstox-apps/:id', authenticateAdmin, (req, res) => {
   const id  = Number(req.params.id);
@@ -2662,24 +2680,49 @@ async function saveAccessToken(token) {
 
 // Daily scheduler — sends WhatsApp auth link at 8:00 AM IST every trading day
 // Also triggers gap-open Bromos recalculation at 9:09 AM IST
+function clearAllAccessTokens() {
+  try {
+    const apps = loadApps();
+    apps.forEach(a => { a.access_token = ''; });
+    saveApps(apps);
+    CONFIG.ACCESS_TOKEN   = '';
+    CONFIG.ACCESS_TOKEN_2 = '';
+    CONFIG.ACCESS_TOKEN_3 = '';
+    updateEnvKey('ACCESS_TOKEN',   '');
+    updateEnvKey('ACCESS_TOKEN_2', '');
+    updateEnvKey('ACCESS_TOKEN_3', '');
+    console.log('🧹 3 AM IST — all Upstox access tokens cleared (daily expiry)');
+  } catch (e) {
+    console.error('❌ Failed to clear tokens at 3 AM:', e.message);
+  }
+}
+
 function startTokenScheduler() {
-  let lastSentDate = '';
-  let lastBromosGapDate = '';
+  let lastSentDate       = '';
+  let lastBromosGapDate  = '';
+  let lastTokenClearDate = '';
 
   setInterval(async () => {
     const utcMs = Date.now() + new Date().getTimezoneOffset() * 60000;
     const ist   = new Date(utcMs + 5.5 * 3600000);
     const day   = ist.getDay(); // 0=Sun, 6=Sat
-    if (day === 0 || day === 6) return; // skip weekends
 
     const hh  = ist.getHours();
     const mm  = ist.getMinutes();
     const ymd = ist.toISOString().split('T')[0];
 
+    // ── 3:00 AM IST every day — clear all expired tokens ──────────────────
+    if (hh === 3 && mm < 5 && ymd !== lastTokenClearDate) {
+      lastTokenClearDate = ymd;
+      clearAllAccessTokens();
+    }
+
+    if (day === 0 || day === 6) return; // skip weekends for the rest
+
     // Fire once at 8:00–8:04 AM IST on trading days
     if (hh === 8 && mm < 5 && ymd !== lastSentDate) {
       lastSentDate = ymd;
-      console.log(`📅 [${ymd}] 8 AM IST — requesting Upstox token via WhatsApp...`);
+      console.log(`📅 [${ymd}] 8 AM IST — requesting Upstox token via email...`);
       await sendUpstoxAuthLink();
     }
 
@@ -2694,7 +2737,7 @@ function startTokenScheduler() {
     }
   }, 60 * 1000); // check every minute
 
-  console.log('⏰ Upstox daily token scheduler started (8:00 AM IST on weekdays, sends email)');
+  console.log('⏰ Token scheduler started — clears at 3 AM IST daily, sends auth email at 8 AM on trading days');
 }
 
 // ================================

@@ -61,6 +61,13 @@ export default function SideNav() {
   const isJoinMeet     = state.joinMeetActive;
   const isAdminOrMember = userRole === 'admin' || userRole === 'member';
 
+  // Check indicator access config — controls nav item visibility per role
+  const canSeeIndicator = (id) => {
+    const ind = (state.indicators || []).find(i => i.id === id);
+    if (!ind) return isAdminOrMember; // fallback: only admin/member if not loaded
+    return ind[userRole] === true;
+  };
+
   const navItems = [
     { section: 'Main', items: [
       { icon: '🏠', label: 'Dashboard',         tooltip: 'Dashboard',         active: isDashboard,  onClick: goDashboard  },
@@ -69,7 +76,7 @@ export default function SideNav() {
     ]},
     { section: 'AI Tools', items: [
       { icon: '⚡', label: 'Power AI Stock', tooltip: 'Power AI Stock', active: isPowerAI, onClick: goPowerAI },
-      ...(isAdminOrMember ? [{ icon: '🧠', label: 'AI Train', tooltip: 'AI Train — Pattern Analysis', active: isAITrain, onClick: goAITrain }] : []),
+      ...(canSeeIndicator('ai_train') ? [{ icon: '🧠', label: 'AI Train', tooltip: 'AI Train — Pattern Analysis', active: isAITrain, onClick: goAITrain }] : []),
       { icon: '📈', label: 'AI Stock', tooltip: 'AI Stock Signals', active: isAIStock, onClick: goAIStock },
       { icon: '🤖', label: 'AI Swing Trade', tooltip: 'AI Swing Trade', active: false, badge: 'Soon' },
       { icon: '📒', label: 'Journal Book',   tooltip: 'Journal Book',   active: isJournal, onClick: goJournal },

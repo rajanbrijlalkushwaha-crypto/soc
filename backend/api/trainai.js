@@ -371,7 +371,7 @@ function analyzeDay(datePath, symbol, expiry, date) {
   for (const [key, acc] of Object.entries(patternAcc)) {
     let bestLead = null, bestAcc = 0, bestDir = null, bestOcc = 0;
     for (const [lead, counts] of Object.entries(acc.leads)) {
-      if (counts.total < 2) continue;
+      if (counts.total < 1) continue;
       const upA  = counts.UP   / counts.total;
       const downA= counts.DOWN / counts.total;
       const a    = Math.max(upA, downA);
@@ -382,7 +382,7 @@ function analyzeDay(datePath, symbol, expiry, date) {
         bestOcc  = counts.total;
       }
     }
-    if (!bestLead || bestAcc < 0.60) continue;
+    if (!bestLead || bestAcc < 0.50) continue;
     keyPatterns.push({
       pattern:       key,
       signals:       acc.sigs,
@@ -719,8 +719,8 @@ function scheduleAutoRun() {
       return;
     }
 
-    // During market hours: re-analyse today every 15 minutes (keeps live signals fresh)
-    if (isMarketHoursIST() && m % 15 === 0 && !_runStatus.running) {
+    // During market hours: re-analyse today every 1 minute (keeps live signals fresh)
+    if (isMarketHoursIST() && !_runStatus.running) {
       console.log('[TrainAI] Intraday auto-analysis...');
       _runStatus.running = true;
       setImmediate(() => runAllAnalysis(false));
@@ -749,12 +749,12 @@ module.exports = function(app) {
   };
 
   // GET status of AI Train engine
-  app.get('/api/trainai/status', authCheck, adminOrMember, (req, res) => {
+  app.get('/api/trainai/status', (req, res) => {
     res.json({ success: true, status: _runStatus });
   });
 
   // POST run analysis manually
-  app.post('/api/trainai/run', authCheck, adminOrMember, (req, res) => {
+  app.post('/api/trainai/run', authCheck, adminOnly, (req, res) => {
     if (_runStatus.running) return res.json({ success: false, message: 'Analysis already running' });
     // Manual run always processes all dates including old historical data
     const forceAll = true;
@@ -946,7 +946,7 @@ module.exports = function(app) {
           const s40Raw = readJSON(path.join(symDir, expiry, date, '_chart_strategy40.json'));
           const s40 = s40Raw || r.strategy40 || {};
 
-          const MIN_ACCURACY = 70;
+          const MIN_ACCURACY = 55;
           const upPatterns   = keyPatterns.filter(p => p.direction === 'UP'   && p.accuracy_pct >= MIN_ACCURACY);
           const downPatterns = keyPatterns.filter(p => p.direction === 'DOWN' && p.accuracy_pct >= MIN_ACCURACY);
 
@@ -1113,14 +1113,14 @@ module.exports = function(app) {
     } catch(e) {}
   }
 
-  // Initial warm-up + every 60 s refresh
+  // Initial warm-up + every 60 s refresh (matches 1-min analysis cycle)
   setTimeout(() => {
     refreshLiveAiSignalCache();
-    setInterval(refreshLiveAiSignalCache, 60_000);
+    setInterval(refreshLiveAiSignalCache, 60_000); // refresh cache every 1 min
   }, 8000);
 
   // GET live AI Stock signals — served from RAM, refreshed every 60 s
-  app.get('/api/trainai/stock-signals/live', authCheck, adminOrMember, (req, res) => {
+  app.get('/api/trainai/stock-signals/live', (req, res) => {
     // If market is open and today's analysis hasn't run yet, trigger immediately
     if (isMarketHoursIST() && !_runStatus.running) {
       const dataRoot = PATHS.MARKET;
@@ -1150,7 +1150,7 @@ module.exports = function(app) {
   });
 
   // GET AI Stock signals for a date — all symbols, split resistance/support
-  app.get('/api/trainai/stock-signals/:date', authCheck, adminOrMember, (req, res) => {
+  app.get('/api/trainai/stock-signals/:date', (req, res) => {
     const { date } = req.params;
     // Serve from cache when the requested date matches live cache
     if (date === _liveAiCache.date && _liveAiCache.data) return res.json(_liveAiCache.data);
@@ -1160,7 +1160,7 @@ module.exports = function(app) {
   });
 
   // GET all dates that have at least one AI Train result (any symbol)
-  app.get('/api/trainai/stock-dates', authCheck, adminOrMember, (req, res) => {
+  app.get('/api/trainai/stock-dates', (req, res) => {
     try {
       const dataRoot = PATHS.MARKET;
       const dateSet  = new Set();
@@ -1178,8 +1178,8 @@ module.exports = function(app) {
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
 
-  // GET indicator access list (any logged-in user)
-  app.get('/api/indicators', authCheck, (req, res) => {
+  // GET indicator access list (open — used by frontend to control nav visibility)
+  app.get('/api/indicators', (req, res) => {
     res.json({ success: true, indicators: loadIndicators() });
   });
 

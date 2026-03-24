@@ -71,8 +71,14 @@ function AppContent() {
     // default (/dashboard or /) stays as indexPageActive:true
   }, [dispatch]);
 
-  // Fetch user info + UI settings + notifications on mount (all in parallel after auth)
+  // Fetch user info + UI settings + notifications + indicators on mount
   useEffect(() => {
+    // Fetch indicators immediately (no auth needed)
+    fetch(`${API_BASE}/api/indicators`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (d?.success && d.indicators) dispatch({ type: 'SET_INDICATORS', payload: d.indicators }); })
+      .catch(() => {});
+
     fetch(`${API_BASE}/api/auth/check-session`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => {

@@ -77,31 +77,27 @@ export default function SplitChart() {
   const [showBromos, setShowBromos] = useState(true);
   const [showMCTR,   setShowMCTR]   = useState(true);
   const [showAI,     setShowAI]     = useState(true);
-  const [aiSignal,   setAiSignal]   = useState(null);  // { direction, reversal, strike, score }
+  const [aiSignals,  setAiSignals]  = useState({ res: [], sup: [] });  // all signals for current symbol
   const [tf,         setTf]         = useState(5);     // timeframe in minutes
 
   // ── Fetch AI signal for current symbol ──────────────────────────────────────
   // Live mode: uses RAM-cached /live endpoint, polls every 60 s for updates.
   // Historical mode: uses date-based endpoint (one-shot).
   useEffect(() => {
-    if (!currentSymbol) { setAiSignal(null); return; }
+    if (!currentSymbol) { setAiSignals({ res: [], sup: [] }); return; }
 
     const pickSignal = (d) => {
-      if (!d?.success) { setAiSignal(null); return; }
+      if (!d?.success) { setAiSignals({ res: [], sup: [] }); return; }
       const symName = currentSymbol.replace(/_/g, ' ');
-      const resList = (d.resistance || []).filter(s => s.symbol === symName);
-      const supList = (d.support    || []).filter(s => s.symbol === symName);
-      const best = [...resList, ...supList].sort((a, b) => (b.trade_score || 0) - (a.trade_score || 0))[0];
-      setAiSignal(best
-        ? { direction: resList.includes(best) ? 'DOWN' : 'UP', reversal: best.from_reversal, strike: best.from_strike, score: best.trade_score, trade_time: best.trade_time || null }
-        : null
-      );
+      const res = (d.resistance || []).filter(s => s.symbol === symName);
+      const sup = (d.support    || []).filter(s => s.symbol === symName);
+      setAiSignals({ res, sup });
     };
 
     if (historicalMode) {
-      if (!currentDataDate || currentDataDate === '--') { setAiSignal(null); return; }
+      if (!currentDataDate || currentDataDate === '--') { setAiSignals({ res: [], sup: [] }); return; }
       fetch(`/api/trainai/stock-signals/${currentDataDate}`, { credentials: 'include' })
-        .then(r => r.json()).then(pickSignal).catch(() => setAiSignal(null));
+        .then(r => r.json()).then(pickSignal).catch(() => setAiSignals({ res: [], sup: [] }));
       return;
     }
 
@@ -168,14 +164,24 @@ export default function SplitChart() {
       if (visible(mctrSupportFoundAt))    add(mctrSupportRev,    '#1565c0', 'MCTR-S', mctrSupportFoundAt,    0, 2);
     }
 
-    // AI signal — only show after trade_time in historical mode
-    if (showAI && aiSignal?.reversal != null && visible(aiSignal.trade_time)) {
-      const col = aiSignal.direction === 'DOWN' ? '#ff6f00' : '#00897b';
-      add(aiSignal.reversal, col, `AI-${aiSignal.direction === 'DOWN' ? 'R' : 'S'}`, aiSignal.trade_time, 0, 3);
+    // AI signals — show all resistance + support for this symbol with score
+    if (showAI) {
+      for (const sig of (aiSignals.res || [])) {
+        if (sig.from_reversal != null && visible(sig.trade_time)) {
+          const scoreStr = sig.trade_score != null ? ` [${sig.trade_score}]` : '';
+          add(sig.from_reversal, '#ff6f00', `AI-R${scoreStr}`, sig.trade_time, 0, 3);
+        }
+      }
+      for (const sig of (aiSignals.sup || [])) {
+        if (sig.from_reversal != null && visible(sig.trade_time)) {
+          const scoreStr = sig.trade_score != null ? ` [${sig.trade_score}]` : '';
+          add(sig.from_reversal, '#00897b', `AI-S${scoreStr}`, sig.trade_time, 0, 3);
+        }
+      }
     }
   }, [
     historicalMode, currentTime,
-    showBromos, showMCTR, showAI, aiSignal,
+    showBromos, showMCTR, showAI, aiSignals,
     strategy40Support, strategy40SupportReversal, strategy40Resistance, strategy40ResistanceReversal,
     mctrSupport, mctrSupportRev, mctrResistance, mctrResistanceRev,
     mctrSupportFoundAt, mctrResistanceFoundAt,
@@ -533,20 +539,20 @@ export default function SplitChart() {
           >
             MCTR
           </button>
-          <button
-            className={btnClass(showAI)}
-            style={{ '--btn-color': aiSignal ? (aiSignal.direction === 'DOWN' ? '#ff6f00' : '#00897b') : '#888' }}
-            onClick={() => setShowAI(v => !v)}
-            title="Toggle AI signal level"
-            disabled={!aiSignal}
-          >
-            AI {aiSignal && (
-              <span className="sc-ai-badge">
-                {aiSignal.direction === 'DOWN' ? '⬇' : '⬆'}
-                {aiSignal.score != null ? ` ${aiSignal.score}` : ''}
-              </span>
-            )}
-          </button>
+          {(() => {
+            const aiCount = (aiSignals.res?.length || 0) + (aiSignals.sup?.length || 0);
+            return (
+              <button
+                className={btnClass(showAI)}
+                style={{ '--btn-color': aiCount > 0 ? '#ff6f00' : '#888' }}
+                onClick={() => setShowAI(v => !v)}
+                title="Toggle AI signal levels"
+                disabled={aiCount === 0}
+              >
+                AI {aiCount > 0 && <span className="sc-ai-badge">{aiCount}</span>}
+              </button>
+            );
+          })()}
         </div>
         {!historicalMode && status === 'ready' && (
           <button
@@ -559,7 +565,7 @@ export default function SplitChart() {
       </div>
 
       {/* Legend */}
-      {(showBromos || showMCTR || (showAI && aiSignal)) && (
+      {(showBromos || showMCTR || (showAI && (aiSignals.res?.length || aiSignals.sup?.length))) && (
         <div className="sc-legend">
           {showBromos && strategy40ResistanceReversal != null && (
             <span className="sc-leg-item" style={{ color: '#c00' }}>■ Bromos R:{strategy40ResistanceReversal}</span>
@@ -573,11 +579,16 @@ export default function SplitChart() {
           {showMCTR && mctrSupport != null && (
             <span className="sc-leg-item" style={{ color: '#1565c0' }}>■ MCTR-S:{mctrSupport}</span>
           )}
-          {showAI && aiSignal?.reversal != null && (
-            <span className="sc-leg-item" style={{ color: aiSignal.direction === 'DOWN' ? '#ff6f00' : '#00897b' }}>
-              ■ AI-{aiSignal.direction === 'DOWN' ? 'R' : 'S'}:{aiSignal.reversal}
+          {showAI && (aiSignals.res || []).map((sig, i) => sig.from_reversal != null && (
+            <span key={`air${i}`} className="sc-leg-item" style={{ color: '#ff6f00' }}>
+              ■ AI-R:{sig.from_reversal}{sig.trade_score != null ? ` (${sig.trade_score})` : ''}
             </span>
-          )}
+          ))}
+          {showAI && (aiSignals.sup || []).map((sig, i) => sig.from_reversal != null && (
+            <span key={`ais${i}`} className="sc-leg-item" style={{ color: '#00897b' }}>
+              ■ AI-S:{sig.from_reversal}{sig.trade_score != null ? ` (${sig.trade_score})` : ''}
+            </span>
+          ))}
         </div>
       )}
 

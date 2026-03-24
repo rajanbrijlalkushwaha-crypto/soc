@@ -423,16 +423,18 @@ function SystemTab({ adminToken }) {
 // ── Upstox Apps Panel ────────────────────────────────────────────────────────
 function UpstoxAppsPanel({ adminToken }) {
   const BLANK = { name:'', api_key:'', api_secret:'', redirect_uri:'' };
-  const [apps,        setApps]       = useState([]);
-  const [adminEmail,  setAdminEmail] = useState('');
-  const [emailTime,   setEmailTime]  = useState('08:00');
-  const [newRow,      setNewRow]     = useState({ ...BLANK });
-  const [editSecrets, setEditSecrets]= useState({});
-  const [saving,      setSaving]     = useState(null);
-  const [adding,      setAdding]     = useState(false);
-  const [deleting,    setDeleting]   = useState(null);
-  const [sendingAll,  setSendingAll] = useState(false);
-  const [msg,         setMsg]        = useState('');
+  const [apps,         setApps]        = useState([]);
+  const [adminEmail,   setAdminEmail]  = useState('');
+  const [emailTime,    setEmailTime]   = useState('08:00');
+  const [newRow,       setNewRow]      = useState({ ...BLANK });
+  const [editSecrets,  setEditSecrets] = useState({});
+  const [saving,       setSaving]      = useState(null);
+  const [adding,       setAdding]      = useState(false);
+  const [deleting,     setDeleting]    = useState(null);
+  const [sendingAll,   setSendingAll]  = useState(false);
+  const [msg,          setMsg]         = useState('');
+  const [tokenInputs,  setTokenInputs] = useState({});  // { appId: tokenString }
+  const [settingToken, setSettingToken]= useState(null); // appId being saved
 
   const load = useCallback(() => {
     ADMIN_API('/api/admin/upstox-apps', adminToken)
@@ -497,6 +499,35 @@ function UpstoxAppsPanel({ adminToken }) {
     finally { setSendingAll(false); }
   };
 
+  const setToken = async (appId) => {
+    const token = (tokenInputs[appId] || '').trim();
+    setSettingToken(appId); setMsg('');
+    try {
+      const d = await ADMIN_API(`/api/admin/upstox-apps/${appId}/token`, adminToken, {
+        method: 'PATCH', body: { access_token: token }
+      });
+      setMsg(d.message || (d.success ? 'Token saved!' : 'Failed'));
+      if (d.success) {
+        setTokenInputs(t => { const n={...t}; delete n[appId]; return n; });
+        load();
+      }
+    } catch { setMsg('Error'); }
+    finally { setSettingToken(null); }
+  };
+
+  const clearToken = async (appId) => {
+    if (!window.confirm('Clear this access token?')) return;
+    setSettingToken(appId); setMsg('');
+    try {
+      const d = await ADMIN_API(`/api/admin/upstox-apps/${appId}/token`, adminToken, {
+        method: 'PATCH', body: { access_token: '' }
+      });
+      setMsg(d.message || 'Cleared');
+      if (d.success) load();
+    } catch { setMsg('Error'); }
+    finally { setSettingToken(null); }
+  };
+
   const th = { padding:'6px 10px', textAlign:'left', fontSize:'11px', color:'#888', fontWeight:600, borderBottom:'1px solid #e0e0e0' };
   const td = { padding:'6px 8px', verticalAlign:'middle' };
 
@@ -524,6 +555,7 @@ function UpstoxAppsPanel({ adminToken }) {
               <th style={th}>API Secret</th>
               <th style={th}>Redirect URI</th>
               <th style={th}>Token</th>
+              <th style={th}>Paste Token</th>
               <th style={th}></th>
             </tr>
           </thead>
@@ -554,6 +586,29 @@ function UpstoxAppsPanel({ adminToken }) {
                     color: a.has_token ? '#1a7a1a' : '#b00' }}>
                     {a.has_token ? '✓ Active' : '✗ None'}
                   </span>
+                  {a.has_token && (
+                    <button className="admp-btn admp-btn-warn" style={{ padding:'2px 8px', marginLeft:'4px', fontSize:'11px' }}
+                      disabled={settingToken === a.id} onClick={() => clearToken(a.id)}>
+                      Clear
+                    </button>
+                  )}
+                </td>
+                <td style={{ ...td, minWidth:'220px' }}>
+                  <div style={{ display:'flex', gap:'4px' }}>
+                    <input
+                      className="admp-input"
+                      style={{ marginBottom:0, flex:1, fontSize:'11px' }}
+                      type="password"
+                      placeholder="Paste access token…"
+                      value={tokenInputs[a.id] || ''}
+                      onChange={e => setTokenInputs(t => ({ ...t, [a.id]: e.target.value }))}
+                    />
+                    <button className="admp-btn admp-btn-success" style={{ padding:'4px 10px', whiteSpace:'nowrap' }}
+                      disabled={!tokenInputs[a.id] || settingToken === a.id}
+                      onClick={() => setToken(a.id)}>
+                      {settingToken === a.id ? '…' : '✓ Set'}
+                    </button>
+                  </div>
                 </td>
                 <td style={{ ...td, whiteSpace:'nowrap' }}>
                   <button className="admp-btn admp-btn-primary" style={{ padding:'4px 12px', marginRight:'4px' }}
@@ -604,6 +659,7 @@ function UpstoxAppsPanel({ adminToken }) {
       </div>
       <div style={{ marginTop:'6px', fontSize:'11px', color:'#999' }}>
         Auto-sends all links in <b>1 email</b> daily at <b>{emailTime} IST</b>. Click each link → token auto-saved.
+        &nbsp;|&nbsp; <span style={{ color:'#c44' }}>All tokens auto-cleared at <b>3:00 AM IST</b> daily (Upstox expiry).</span>
       </div>
     </div>
   );

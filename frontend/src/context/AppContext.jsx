@@ -106,6 +106,9 @@ const initialState = {
   user: null,
   isAuthenticated: false,
 
+  // Indicator access config (loaded from /api/indicators)
+  indicators: [],
+
   // Display format
   showInLakh: false,
 
@@ -266,6 +269,8 @@ function appReducer(state, action) {
       return { ...state, currentSnapshotIndex: action.payload };
     case 'SET_USER':
       return { ...state, user: action.payload, isAuthenticated: !!action.payload };
+    case 'SET_INDICATORS':
+      return { ...state, indicators: action.payload };
     case 'SET_LOADING':
       return { ...state, loading: action.payload };
     case 'SET_ERROR':
