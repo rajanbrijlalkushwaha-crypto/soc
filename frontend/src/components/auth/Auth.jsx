@@ -328,32 +328,43 @@ const AuthPage = () => {
 
   return (
     <div className="auth-container">
-      {/* Floating orbs */}
+      {/* Background orbs */}
       <div className="orb orb-1" />
       <div className="orb orb-2" />
       <div className="orb orb-3" />
 
       <div className="auth-box">
-        {/* Left panel — welcome + features */}
+
+        {/* Top header — spans full width of both panels */}
+        <div className="auth-top-header">
+          <div className="auth-top-welcome">Welcome to</div>
+          <div className="auth-top-brand">soc<span>.ai.in</span></div>
+          <div className="auth-top-sub">AI-Powered Option Chain &amp; Trading Platform</div>
+        </div>
+
+        {/* Panels row */}
+        <div className="auth-panels">
+
+        {/* Left panel — features */}
         <div className="left-panel">
 
-          {/* Brand — centered */}
-          <div className="lp-brand-wrap">
-            <div className="lp-welcome-sub">Welcome to</div>
-            <div className="lp-brand-big">soc<span>.ai.in</span></div>
-            <div className="lp-brand-tag">AI-Powered Option Chain Analytics</div>
-            <div className="lp-live-badge"><span className="lp-dot" />Live Market Data</div>
-          </div>
+          <div className="lp-top-label">Everything you need to trade smarter</div>
 
           {/* Feature list */}
           <div className="hero-features">
             {[
-              { icon: '⚡', title: 'Real-Time Data',        sub: 'WebSocket — no refresh needed'       },
-              { icon: '📊', title: 'Volume & OI Analysis',  sub: '1, 3, 5, 15 min breakdowns'          },
-              { icon: '🎯', title: 'Smart S&R Levels',      sub: 'OI-based support & resistance'        },
-              { icon: '🔗', title: 'Full Option Chain',     sub: 'OI, Volume, LTP, Greeks in one view'  },
-              { icon: '✨', title: 'Highlight System',      sub: 'Top OI & volume change markers'       },
-              { icon: '🤖', title: 'AI Auto Analysis',      sub: 'Every 1 min during market hours'      },
+              { icon: '⚡', title: 'Real-Time Data',        sub: 'WebSocket — no refresh needed'        },
+              { icon: '📊', title: 'Volume & OI Analysis',  sub: '1, 3, 5, 15 min breakdowns'           },
+              { icon: '🎯', title: 'Smart S&R Levels',      sub: 'OI-based support & resistance'         },
+              { icon: '🔗', title: 'Full Option Chain',     sub: 'OI, Volume, LTP, Greeks in one view'   },
+              { icon: '✨', title: 'Highlight System',      sub: 'Top OI & volume change markers'        },
+              { icon: '🤖', title: 'AI Auto Analysis',      sub: 'Auto analysis every 1 min'             },
+              { icon: '📈', title: 'Swing Trade',           sub: 'Multi-day positional setups'           },
+              { icon: '📓', title: 'Journal Book',          sub: 'Track every trade & review P&L'        },
+              { icon: '🧠', title: 'AI Power Stock',        sub: 'AI-powered stock signals'              },
+              { icon: '🔍', title: 'AI Pattern Match',      sub: 'Chart pattern recognition engine'      },
+              { icon: '📉', title: 'Bromos Trade',          sub: 'OI-based S&R strategy signals'         },
+              { icon: '🔄', title: 'MCTR Trade',            sub: 'Mean-reversion & trend signals'        },
             ].map((f, i) => (
               <div key={i} className="hero-feat">
                 <div className="hero-feat-icon">{f.icon}</div>
@@ -672,6 +683,7 @@ const AuthPage = () => {
           </div>
         </div>
         </div>{/* end right-panel */}
+        </div>{/* end auth-panels */}
       </div>{/* end auth-box */}
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
+import { useOptionChainWS } from './hooks/useOptionChainWS';
 import { AppProvider, useApp } from './context/AppContext';
 import IndexPage from './components/Index/IndexPage';
 import SideNav from './components/sidenav/sidenav';
@@ -135,30 +136,37 @@ function AppContent() {
     } catch (_) {}
   }, [state.user, state.symbols, dispatch]);
 
-  // Load live data when symbol changes
-  const loadLive = useCallback(async () => {
-    if (!state.currentSymbol || state.historicalMode) return;
-    try {
-      const data = await fetchLiveData(state.currentSymbol);
-      dispatch({ type: 'SET_LIVE_DATA', payload: data });
-    } catch (err) {
-      console.error('Error loading live data:', err);
-    }
-  }, [state.currentSymbol, state.historicalMode, dispatch]);
+  // ── WebSocket live data — replaces 5s polling ─────────────────────────────
+  const wsSymbol = state.historicalMode ? null : state.currentSymbol;
+  const { data: wsData, connected: wsConnected } = useOptionChainWS(wsSymbol);
+  const wsFallbackRef = useRef(null);
 
-  // Initial load + interval
+  // Push WS data into app state whenever it arrives
   useEffect(() => {
-    if (!state.currentSymbol) return;
-    if (state.historicalMode) {
-      clearInterval(liveIntervalRef.current);
-      return;
-    }
+    if (!wsData) return;
+    dispatch({ type: 'SET_LIVE_DATA', payload: wsData });
+  }, [wsData, dispatch]);
 
-    loadLive();
-    liveIntervalRef.current = setInterval(loadLive, 5000);
+  // Fallback: if WS not connected after 6s, poll via API every 10s
+  useEffect(() => {
+    if (!state.currentSymbol || state.historicalMode) return;
+    clearInterval(wsFallbackRef.current);
+    if (wsConnected) return;
 
-    return () => clearInterval(liveIntervalRef.current);
-  }, [state.currentSymbol, state.historicalMode, loadLive, liveIntervalRef]);
+    const loadLiveFallback = async () => {
+      try {
+        const data = await fetchLiveData(state.currentSymbol);
+        dispatch({ type: 'SET_LIVE_DATA', payload: data });
+      } catch (_) {}
+    };
+
+    const t = setTimeout(() => {
+      loadLiveFallback();
+      wsFallbackRef.current = setInterval(loadLiveFallback, 10000);
+    }, 6000);
+
+    return () => { clearTimeout(t); clearInterval(wsFallbackRef.current); };
+  }, [state.currentSymbol, state.historicalMode, wsConnected, dispatch]);
 
   // Historical shifting data — only in historical mode (reads from disk, no polling needed)
   useEffect(() => {
