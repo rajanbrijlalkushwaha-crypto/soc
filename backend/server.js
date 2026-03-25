@@ -316,7 +316,7 @@ const CONFIG = {
   
   // Server settings
   PORT: 3000,
-  REFRESH_INTERVAL: 5000, // 5 seconds
+  REFRESH_INTERVAL: 3000, // 3 seconds
   LOG_FILE: "server.log",
   
   // API endpoints
@@ -388,7 +388,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // ================================
 // Session Configuration with File Store
-// ================================
+// ================================we
 app.use(session({
   name: "soc_session",
   secret: process.env.SESSION_SECRET || "simplify-option-chain-secret-key-2025",
