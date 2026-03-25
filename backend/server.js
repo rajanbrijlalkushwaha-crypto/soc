@@ -3029,7 +3029,15 @@ async function startServer() {
           }
         } catch (e) { console.error('  ❌ Strategy40 regeneration error:', e.message); }
 
-        // 1b. Live gap-open correction for _bromos_latest.json (today's header)
+        // 1b. Re-apply gap correction to ALL historical dates with fixed if/else if logic
+        try {
+          if (generateBromosOpenForAllDates) {
+            console.log('  📊 Bromos: re-applying gap correction to all historical dates...');
+            generateBromosOpenForAllDates();
+          }
+        } catch (e) { console.error('  ❌ Bromos gap correction error:', e.message); }
+
+        // 1c. Live gap-open correction for _bromos_latest.json (today's header)
         try {
           if (updateBromosForGapOpen) {
             const instruments = CONFIG?.INSTRUMENTS || [];

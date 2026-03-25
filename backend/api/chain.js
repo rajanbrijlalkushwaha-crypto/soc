@@ -1937,8 +1937,9 @@ function applyGapCorrection(prevBromos, openSpot) {
 
   const allRev = Array.isArray(result.all_reversals) ? result.all_reversals : [];
 
+  // Mutually exclusive: gap-down → only Support changes; gap-up → only Resistance changes
   if (isGapDown) {
-    // Find the highest sup_rev that is still below today's open — no recalculation needed
+    // Gap DOWN open: spot below Support → find new Support below spot. Resistance stays same.
     const candidates = allRev
       .filter(r => r.sup_rev != null && r.sup_rev < openSpot)
       .sort((a, b) => b.sup_rev - a.sup_rev); // descending → closest below openSpot first
@@ -1947,12 +1948,10 @@ function applyGapCorrection(prevBromos, openSpot) {
       result.support          = candidates[0].strike;
       result.support_reversal = candidates[0].sup_rev;
       result.gap_updated_at   = new Date().toISOString();
+      // Resistance explicitly unchanged
     }
-    // R unchanged
-  }
-
-  if (isGapUp) {
-    // Find the lowest res_rev that is still above today's open — no recalculation needed
+  } else if (isGapUp) {
+    // Gap UP open: spot above Resistance → find new Resistance above spot. Support stays same.
     const candidates = allRev
       .filter(r => r.res_rev != null && r.res_rev > openSpot)
       .sort((a, b) => a.res_rev - b.res_rev); // ascending → closest above openSpot first
@@ -1961,8 +1960,8 @@ function applyGapCorrection(prevBromos, openSpot) {
       result.resistance          = candidates[0].strike;
       result.resistance_reversal = candidates[0].res_rev;
       result.gap_updated_at      = new Date().toISOString();
+      // Support explicitly unchanged
     }
-    // S unchanged
   }
 
   return result;

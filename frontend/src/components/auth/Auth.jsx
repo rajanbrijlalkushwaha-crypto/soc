@@ -332,51 +332,61 @@ const AuthPage = () => {
 
       {/* Hero panel */}
       <div className="hero-panel">
-        <div className="hero-overlay"></div>
 
-        {/* Top brand */}
+        {/* Brand */}
         <div className="hero-welcome">
           <div className="hero-welcome-sub">Welcome to</div>
           <div className="hero-brand-big">soc<span>.ai.in</span></div>
         </div>
 
-        {/* Centre — mock option chain */}
-        <div className="hero-visual">
-          <div className="hero-oc-title">
+        {/* Centre content */}
+        <div className="hero-center">
+          {/* Live ticker bar */}
+          <div className="hero-ticker">
             <span className="hero-oc-live-dot" />
-            NIFTY 50 &nbsp;·&nbsp; Live Option Chain
+            <span className="hero-ticker-item call">NIFTY <b>24,180</b> <em>▲ +0.42%</em></span>
+            <span className="hero-ticker-sep">·</span>
+            <span className="hero-ticker-item put">BANKNIFTY <b>52,340</b> <em className="down">▼ −0.18%</em></span>
+            <span className="hero-ticker-sep">·</span>
+            <span className="hero-ticker-item call">SENSEX <b>79,850</b> <em>▲ +0.31%</em></span>
           </div>
-          <div className="hero-oc-table">
-            <div className="hero-oc-hdr">
-              <span>CALL OI</span><span>STRIKE</span><span>PUT OI</span>
-            </div>
+
+          {/* Main headline */}
+          <div className="hero-headline">
+            <h1>Smart Option Chain<br /><em>Analysis Platform</em></h1>
+            <p className="hero-desc">
+              Trade smarter with real-time option chain data, advanced volume analysis,
+              and accurate support &amp; resistance levels.
+            </p>
+          </div>
+
+          {/* Feature list */}
+          <div className="hero-features">
             {[
-              { c: '4.8L', s: '24,000', p: '1.9L' },
-              { c: '6.2L', s: '24,100', p: '3.3L' },
-              { c: '9.1L', s: '24,200', p: '8.7L', atm: true },
-              { c: '3.4L', s: '24,300', p: '5.1L' },
-              { c: '2.1L', s: '24,400', p: '3.8L' },
-            ].map((r, i) => (
-              <div key={i} className={`hero-oc-row${r.atm ? ' atm' : ''}`}>
-                <span className="hero-c-val">{r.c}</span>
-                <span className="hero-s-val">{r.s}</span>
-                <span className="hero-p-val">{r.p}</span>
+              { icon: '⚡', title: 'Real-Time Data',              sub: 'WebSocket based — no refresh needed'       },
+              { icon: '📊', title: 'Volume & OI Analysis',        sub: '1, 3, 5, 15 min breakdowns'               },
+              { icon: '🎯', title: 'Smart S&R Levels',            sub: 'OI-based support & resistance'             },
+              { icon: '🔗', title: 'Full Option Chain',           sub: 'OI, Volume, LTP, Greeks in one view'       },
+              { icon: '✨', title: 'Highlight System',            sub: 'Top OI, Volume & OI change markers'        },
+              { icon: '🎯', title: 'ATM Focus Mode',              sub: 'Only the strikes that matter'              },
+            ].map((f, i) => (
+              <div key={i} className="hero-feat">
+                <div className="hero-feat-icon">{f.icon}</div>
+                <div className="hero-feat-body">
+                  <div className="hero-feat-title">{f.title}</div>
+                  <div className="hero-feat-sub">{f.sub}</div>
+                </div>
+                <div className="hero-feat-check">✓</div>
               </div>
             ))}
           </div>
-          <div className="hero-chips">
-            <span className="hero-chip">🤖 AI Analysis</span>
-            <span className="hero-chip">⚡ Live Data</span>
-            <span className="hero-chip">📊 12 Symbols</span>
-            <span className="hero-chip">🔒 Secure</span>
-          </div>
         </div>
 
-        {/* Bottom text */}
-        <div className="hero-text">
-          <div className="hero-badge"><span /> AI-Powered Analytics</div>
-          <h2>Trade Smarter with<br /><em>Option Chain AI</em></h2>
-          <p>Real-time data, Greeks analysis, and AI-driven insights — everything you need to make confident trading decisions.</p>
+        {/* Tagline */}
+        <div className="hero-tagline">
+          <div className="hero-tagline-line" />
+          <span>"Trade with Data, Not Emotions"</span>
+          <div className="hero-tagline-line" />
         </div>
       </div>
 

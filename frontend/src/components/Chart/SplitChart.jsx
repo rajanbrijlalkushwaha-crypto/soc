@@ -401,9 +401,10 @@ export default function SplitChart() {
 
     } else {
       // ── Live: seed from Upstox intraday API, then WebSocket tick updates ────
+      // Use the option chain data date (not system date) so chart matches the loaded data
 
-      // 1. Seed with today's intraday OHLC from Upstox
-      apiFetch(`/api/chart/historical/${currentSymbol}?tf=${tf}`)
+      // 1. Seed with intraday OHLC for the option chain's data date
+      apiFetch(`/api/chart/historical/${currentSymbol}?tf=${tf}&from=${today}&to=${today}`)
         .then(data => {
           if (!alive) return;
           if (data?.candles?.length) {
@@ -416,8 +417,8 @@ export default function SplitChart() {
                 if (d?.candles?.length) {
                   applyEpochCandles(d.candles, today);
                 } else {
-                  // Last resort: old splitchart live endpoint
-                  return apiFetch(`/api/splitchart/live/${currentSymbol}?tf=${tf}`)
+                  // Last resort: saved splitchart files for this date
+                  return apiFetch(`/api/splitchart/live/${currentSymbol}?tf=${tf}&date=${today}`)
                     .then(d2 => { if (alive) applyCandles(d2, today); });
                 }
               });
