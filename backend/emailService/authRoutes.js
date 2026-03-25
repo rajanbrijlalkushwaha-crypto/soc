@@ -877,4 +877,60 @@ router.post('/ui-settings', (req, res) => {
     }
 });
 
+// ================================
+// BOOTSTRAP — single call returns everything needed on page load
+// Replaces: check-session + ui-settings + notifications + popup (4 round trips → 1)
+// ================================
+router.get('/bootstrap', (req, res) => {
+    try {
+        // Not logged in — return minimal response so frontend shows login page fast
+        if (!req.session.userId || !req.session.userVerified) {
+            return res.json({ authenticated: false });
+        }
+
+        const uid = req.session.userId;
+
+        // User info
+        const user = {
+            id:    uid,
+            email: req.session.userEmail,
+            name:  req.session.userName,
+            role:  req.session.userRole || 'user',
+        };
+
+        // UI settings
+        let settings = {};
+        try {
+            const uiFile = path.join(UI_DIR, `${uid}UI.json`);
+            if (fs.existsSync(uiFile)) settings = JSON.parse(fs.readFileSync(uiFile, 'utf8'));
+        } catch {}
+
+        // Notifications
+        let notifications = [], popup = [], unread = 0;
+        try {
+            const NOTIF_DIR      = path.join(__dirname, '../../data/notifications');
+            const NOTIF_SEEN_DIR = path.join(NOTIF_DIR, 'seen');
+            const seenFile = path.join(NOTIF_SEEN_DIR, `${uid}.json`);
+            const seen = fs.existsSync(seenFile) ? JSON.parse(fs.readFileSync(seenFile, 'utf8')) : {};
+
+            const all = fs.existsSync(NOTIF_DIR)
+                ? fs.readdirSync(NOTIF_DIR)
+                    .filter(f => /^notif\d+\.json$/.test(f))
+                    .map(f => { try { const d = JSON.parse(fs.readFileSync(path.join(NOTIF_DIR, f), 'utf8')); d.hasFile = fs.existsSync(path.join(NOTIF_DIR, `notif${d.id}file`)); return d; } catch { return null; } })
+                    .filter(Boolean)
+                    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+                : [];
+
+            notifications = all.map(n => ({ ...n, seenCount: seen[n.id] || 0, seen: (seen[n.id] || 0) > 0 }));
+            popup         = all.filter(n => (seen[n.id] || 0) < 5);
+            unread        = notifications.filter(n => !n.seen).length;
+        } catch {}
+
+        res.json({ authenticated: true, user, settings, notifications, popup, unread });
+    } catch (err) {
+        console.error('Bootstrap error:', err);
+        res.status(500).json({ error: 'Bootstrap failed' });
+    }
+});
+
 module.exports = router;

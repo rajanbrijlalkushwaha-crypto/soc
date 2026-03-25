@@ -71,33 +71,23 @@ function AppContent() {
     // default (/dashboard or /) stays as indexPageActive:true
   }, [dispatch]);
 
-  // Fetch everything in parallel on mount
+  // Bootstrap — single call returns session + ui + notifications + indicators
   useEffect(() => {
-    // Fire indicators + session check simultaneously
     Promise.all([
-      fetch(`${API_BASE}/api/indicators`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
-      fetch(`${API_BASE}/api/auth/check-session`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
-    ]).then(([indData, session]) => {
+      fetch(`${API_BASE}/api/auth/bootstrap`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
+      fetch(`${API_BASE}/api/indicators`,     { credentials: 'include' }).then(r => r.json()).catch(() => null),
+    ]).then(([boot, indData]) => {
       if (indData?.success && indData.indicators)
         dispatch({ type: 'SET_INDICATORS', payload: indData.indicators });
 
-      if (session?.authenticated && session.user) {
-        dispatch({ type: 'SET_USER', payload: session.user });
-        // Fire remaining calls in parallel
-        Promise.all([
-          fetch(`${API_BASE}/api/auth/ui-settings`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
-          fetch(`${API_BASE}/api/notifications/popup`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
-          fetch(`${API_BASE}/api/notifications`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
-        ]).then(([ui, popup, notifs]) => {
-          if (ui?.success && ui.settings && Object.keys(ui.settings).length > 0)
-            dispatch({ type: 'SET_UI_SETTINGS', payload: ui.settings });
-          if (popup?.notifications?.length > 0)
-            dispatch({ type: 'SET_NOTIF_POPUP', payload: popup.notifications });
-          if (notifs) {
-            const unread = (notifs.notifications || []).filter(n => !n.seen).length;
-            dispatch({ type: 'SET_NOTIF_UNREAD', payload: unread });
-          }
-        });
+      if (boot?.authenticated && boot.user) {
+        dispatch({ type: 'SET_USER', payload: boot.user });
+        if (boot.settings && Object.keys(boot.settings).length > 0)
+          dispatch({ type: 'SET_UI_SETTINGS', payload: boot.settings });
+        if (boot.popup?.length > 0)
+          dispatch({ type: 'SET_NOTIF_POPUP', payload: boot.popup });
+        if (boot.unread > 0)
+          dispatch({ type: 'SET_NOTIF_UNREAD', payload: boot.unread });
       }
     });
   }, [dispatch]);
