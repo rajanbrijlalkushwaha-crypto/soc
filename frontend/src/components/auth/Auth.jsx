@@ -330,80 +330,71 @@ const AuthPage = () => {
     <div className="auth-container">
       <div className="bg-grid"></div>
 
-      {/* Hero panel */}
-      <div className="hero-panel">
+      <div className="auth-box">
+        {/* Left panel — welcome + features */}
+        <div className="left-panel">
 
-        {/* Brand */}
-        <div className="hero-welcome">
-          <div className="hero-welcome-sub">Welcome to</div>
-          <div className="hero-brand-big">soc<span>.ai.in</span></div>
-        </div>
-
-        {/* Centre content */}
-        <div className="hero-center">
-          {/* Live ticker bar */}
-          <div className="hero-ticker">
-            <span className="hero-oc-live-dot" />
-            <span className="hero-ticker-item call">NIFTY <b>24,180</b> <em>▲ +0.42%</em></span>
-            <span className="hero-ticker-sep">·</span>
-            <span className="hero-ticker-item put">BANKNIFTY <b>52,340</b> <em className="down">▼ −0.18%</em></span>
-            <span className="hero-ticker-sep">·</span>
-            <span className="hero-ticker-item call">SENSEX <b>79,850</b> <em>▲ +0.31%</em></span>
+          {/* Brand */}
+          <div className="lp-brand-wrap">
+            <div className="lp-welcome-sub">Welcome to</div>
+            <div className="lp-brand-big">SOC <span>Calculator</span></div>
+            <div className="lp-brand-tag">AI-Powered Option Chain Analytics</div>
           </div>
 
-          {/* Main headline */}
-          <div className="hero-headline">
-            <h1>Smart Option Chain<br /><em>Analysis Platform</em></h1>
-            <p className="hero-desc">
-              Trade smarter with real-time option chain data, advanced volume analysis,
-              and accurate support &amp; resistance levels.
-            </p>
-          </div>
+          {/* Centre content */}
+          <div className="lp-center">
+            {/* Live ticker bar */}
+            <div className="hero-ticker">
+              <span className="hero-oc-live-dot" />
+              <span className="hero-ticker-item">NIFTY <b>24,180</b> <em>▲ +0.42%</em></span>
+              <span className="hero-ticker-sep">·</span>
+              <span className="hero-ticker-item">BANKNIFTY <b>52,340</b> <em className="down">▼ −0.18%</em></span>
+              <span className="hero-ticker-sep">·</span>
+              <span className="hero-ticker-item">SENSEX <b>79,850</b> <em>▲ +0.31%</em></span>
+            </div>
 
-          {/* Feature list */}
-          <div className="hero-features">
-            {[
-              { icon: '⚡', title: 'Real-Time Data',              sub: 'WebSocket based — no refresh needed'       },
-              { icon: '📊', title: 'Volume & OI Analysis',        sub: '1, 3, 5, 15 min breakdowns'               },
-              { icon: '🎯', title: 'Smart S&R Levels',            sub: 'OI-based support & resistance'             },
-              { icon: '🔗', title: 'Full Option Chain',           sub: 'OI, Volume, LTP, Greeks in one view'       },
-              { icon: '✨', title: 'Highlight System',            sub: 'Top OI, Volume & OI change markers'        },
-              { icon: '🎯', title: 'ATM Focus Mode',              sub: 'Only the strikes that matter'              },
-            ].map((f, i) => (
-              <div key={i} className="hero-feat">
-                <div className="hero-feat-icon">{f.icon}</div>
-                <div className="hero-feat-body">
-                  <div className="hero-feat-title">{f.title}</div>
-                  <div className="hero-feat-sub">{f.sub}</div>
+            {/* Main headline */}
+            <div className="hero-headline">
+              <h1>Smart Option Chain<br /><em>Analysis Platform</em></h1>
+              <p className="hero-desc">
+                Trade smarter with real-time option chain data, advanced volume analysis,
+                and accurate support &amp; resistance levels.
+              </p>
+            </div>
+
+            {/* Feature list */}
+            <div className="hero-features">
+              {[
+                { icon: '⚡', title: 'Real-Time Data',         sub: 'WebSocket — no refresh needed'      },
+                { icon: '📊', title: 'Volume & OI Analysis',   sub: '1, 3, 5, 15 min breakdowns'         },
+                { icon: '🎯', title: 'Smart S&R Levels',       sub: 'OI-based support & resistance'       },
+                { icon: '🔗', title: 'Full Option Chain',      sub: 'OI, Volume, LTP, Greeks in one view' },
+                { icon: '✨', title: 'Highlight System',       sub: 'Top OI & volume change markers'      },
+                { icon: '🤖', title: 'AI Auto Analysis',       sub: 'Every 1 min during market hours'     },
+              ].map((f, i) => (
+                <div key={i} className="hero-feat">
+                  <div className="hero-feat-icon">{f.icon}</div>
+                  <div className="hero-feat-body">
+                    <div className="hero-feat-title">{f.title}</div>
+                    <div className="hero-feat-sub">{f.sub}</div>
+                  </div>
+                  <div className="hero-feat-check">✓</div>
                 </div>
-                <div className="hero-feat-check">✓</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Tagline */}
-        <div className="hero-tagline">
-          <div className="hero-tagline-line" />
-          <span>"Trade with Data, Not Emotions"</span>
-          <div className="hero-tagline-line" />
-        </div>
-      </div>
-
-      {/* Right panel */}
-      <div className="right-panel">
-        <div className="wrapper">
-          <div className="logo">
-            <div className="logo-welcome-tag">Welcome to</div>
-            <div className="logo-main-brand">soc<span>.ai.in</span></div>
-            <div className="logo-tagline">AI-Powered Option Chain Analytics</div>
-            <div className="logo-pills">
-              <span className="logo-pill">🤖 AI</span>
-              <span className="logo-pill">⚡ Live</span>
-              <span className="logo-pill">📊 Options</span>
-              <span className="logo-pill">🔒 Secure</span>
+              ))}
             </div>
           </div>
+
+          {/* Tagline */}
+          <div className="hero-tagline">
+            <div className="hero-tagline-line" />
+            <span>"Trade with Data, Not Emotions"</span>
+            <div className="hero-tagline-line" />
+          </div>
+        </div>
+
+        {/* Right panel — form */}
+        <div className="right-panel">
+          <div className="wrapper">
 
           <div className="card">
             {/* Loading */}
@@ -698,7 +689,8 @@ const AuthPage = () => {
             )}
           </div>
         </div>
-      </div>
+        </div>{/* end right-panel */}
+      </div>{/* end auth-box */}
     </div>
   );
 };
