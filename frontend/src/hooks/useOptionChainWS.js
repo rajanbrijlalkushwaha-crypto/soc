@@ -131,29 +131,29 @@ export function useOptionChainWS(symbol) {
     };
   }, [applyDiff]);
 
-  // ── Mount / unmount ───────────────────────────────────────────────────────
+  // ── Mount / unmount — only connect when symbol is provided ──────────────
   useEffect(() => {
+    if (!symbol) return; // historical mode — don't connect
     connect();
     return () => {
       clearInterval(pingRef.current);
       clearTimeout(retryRef.current);
       wsRef.current?.close();
     };
-  }, [connect]);
+  }, [connect, symbol]);
 
   // ── Symbol change: unsubscribe old, subscribe new, clear stale data ───────
   useEffect(() => {
+    if (!symbol) return;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    // Unsubscribe previous symbol (tracked by symbolRef before this effect runs)
-    // NOTE: symbolRef is updated AFTER this effect — capture before update
     const prevSymbol = symbolRef.current;
     if (prevSymbol && prevSymbol !== symbol) {
       ws.send(JSON.stringify({ action: 'unsubscribe', symbol: prevSymbol }));
     }
 
-    setData(null); // clear stale data immediately on switch
+    setData(null);
     ws.send(JSON.stringify({ action: 'subscribe', symbol }));
   }, [symbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
