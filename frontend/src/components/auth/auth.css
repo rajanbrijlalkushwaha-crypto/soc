@@ -41,34 +41,35 @@ body {
 /* Hero panel */
 .hero-panel {
     display: none;
-    flex: 1;
-    flex-direction: column;
-    justify-content: space-between;
-    padding: 40px 44px;
-    position: relative;
-    overflow: hidden;
-    background:
-        radial-gradient(ellipse 80% 60% at 30% 40%, rgba(255,111,0,0.15) 0%, transparent 65%),
-        radial-gradient(ellipse 60% 80% at 70% 70%, rgba(255,143,0,0.08) 0%, transparent 60%),
-        linear-gradient(135deg, #0f1318 0%, #161d28 50%, #0f1318 100%);
-    border-right: 1px solid rgba(255,111,0,0.12);
 }
 
-.hero-panel::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image: radial-gradient(circle, rgba(255,111,0,0.10) 1px, transparent 1px);
-    background-size: 36px 36px;
-    pointer-events: none;
-}
-
-@media (min-width: 900px) {
+@media (min-width: 860px) {
     .hero-panel {
         display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        flex: 1;
+        min-width: 340px;
+        padding: 40px 40px;
+        position: relative;
+        overflow: hidden;
+        background:
+            radial-gradient(ellipse 80% 60% at 30% 40%, rgba(255,111,0,0.14) 0%, transparent 65%),
+            radial-gradient(ellipse 60% 80% at 70% 70%, rgba(255,143,0,0.07) 0%, transparent 60%),
+            linear-gradient(135deg, #0f1318 0%, #161d28 50%, #0f1318 100%);
+        border-right: 1px solid rgba(255,111,0,0.12);
+    }
+    .hero-panel::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(circle, rgba(255,111,0,0.09) 1px, transparent 1px);
+        background-size: 36px 36px;
+        pointer-events: none;
     }
     .right-panel {
-        width: 480px;
+        width: 460px;
+        min-width: 460px;
         flex-shrink: 0;
     }
 }
@@ -183,7 +184,7 @@ body {
 /* Feature list */
 .hero-features {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 10px;
 }
 
