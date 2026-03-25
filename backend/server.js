@@ -316,7 +316,7 @@ const CONFIG = {
   
   // Server settings
   PORT: 3000,
-  REFRESH_INTERVAL: 3000, // 3 seconds
+  REFRESH_INTERVAL: 5000, // 5 seconds
   LOG_FILE: "server.log",
   
   // API endpoints
