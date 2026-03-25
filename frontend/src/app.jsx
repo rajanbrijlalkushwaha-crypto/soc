@@ -278,8 +278,8 @@ function AppContent() {
       }
     };
 
-    // 3 s delay: option chain table renders first, then signals fill in the header
-    const first = setTimeout(loadSignals, 3000);
+    // Load signals immediately on symbol change
+    const first = setTimeout(loadSignals, 0);
     const poll  = setInterval(loadSignals, 15000);
 
     return () => { clearTimeout(first); clearInterval(poll); };

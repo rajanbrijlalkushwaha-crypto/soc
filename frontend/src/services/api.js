@@ -6,7 +6,7 @@ const api = axios.create({
   baseURL: API_BASE,
   withCredentials: true,
   timeout: 15000,
-  headers: { 'X-Requested-By': 'soc-app' },
+  headers: {},
 });
 
 
