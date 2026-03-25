@@ -350,11 +350,27 @@ const app = express();
 // Trust Cloudflare / Nginx proxy — required for correct IP, protocol, and session cookies
 app.set('trust proxy', 1);
 
-// Gzip compress all API responses
-app.use(compression());
+// Gzip compress all responses
+app.use(compression({ level: 6, threshold: 1024 }));
 
 // ✅ Serve React static files
-app.use(express.static(reactBuildPath));
+// Static assets (JS/CSS) have content hashes in filenames — cache 1 year
+app.use('/static', express.static(path.join(reactBuildPath, 'static'), {
+  maxAge: '1y',
+  immutable: true,
+  etag: false,
+  lastModified: false,
+}));
+// index.html and other root files — never cache (always fresh)
+app.use(express.static(reactBuildPath, {
+  maxAge: 0,
+  etag: true,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  }
+}));
 
 // ================================
 // CORS Configuration — allow all origins
@@ -379,9 +395,10 @@ app.use(session({
   store: new FileStore({
     path: PATHS.SESSIONS,
     ttl: 86400,        // 24 hours
-    retries: 5,        // retry up to 5× on Windows EPERM rename collisions
-    retryDelay: 200,   // 200 ms between retries
-    reapInterval: 3600 // clean expired sessions every hour
+    retries: 2,
+    retryDelay: 100,
+    reapInterval: 3600,
+    fileExtension: '.json',
   }),
   resave: false,
   saveUninitialized: false,

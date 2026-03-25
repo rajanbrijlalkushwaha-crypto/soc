@@ -71,37 +71,35 @@ function AppContent() {
     // default (/dashboard or /) stays as indexPageActive:true
   }, [dispatch]);
 
-  // Fetch user info + UI settings + notifications + indicators on mount
+  // Fetch everything in parallel on mount
   useEffect(() => {
-    // Fetch indicators immediately (no auth needed)
-    fetch(`${API_BASE}/api/indicators`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(d => { if (d?.success && d.indicators) dispatch({ type: 'SET_INDICATORS', payload: d.indicators }); })
-      .catch(() => {});
+    // Fire indicators + session check simultaneously
+    Promise.all([
+      fetch(`${API_BASE}/api/indicators`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
+      fetch(`${API_BASE}/api/auth/check-session`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
+    ]).then(([indData, session]) => {
+      if (indData?.success && indData.indicators)
+        dispatch({ type: 'SET_INDICATORS', payload: indData.indicators });
 
-    fetch(`${API_BASE}/api/auth/check-session`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(data => {
-        if (data.authenticated && data.user) {
-          dispatch({ type: 'SET_USER', payload: data.user });
-          // Fire all three in parallel
-          Promise.all([
-            fetch(`${API_BASE}/api/auth/ui-settings`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
-            fetch(`${API_BASE}/api/notifications/popup`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
-            fetch(`${API_BASE}/api/notifications`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
-          ]).then(([ui, popup, notifs]) => {
-            if (ui?.success && ui.settings && Object.keys(ui.settings).length > 0)
-              dispatch({ type: 'SET_UI_SETTINGS', payload: ui.settings });
-            if (popup?.notifications?.length > 0)
-              dispatch({ type: 'SET_NOTIF_POPUP', payload: popup.notifications });
-            if (notifs) {
-              const unread = (notifs.notifications || []).filter(n => !n.seen).length;
-              dispatch({ type: 'SET_NOTIF_UNREAD', payload: unread });
-            }
-          });
-        }
-      })
-      .catch(() => {});
+      if (session?.authenticated && session.user) {
+        dispatch({ type: 'SET_USER', payload: session.user });
+        // Fire remaining calls in parallel
+        Promise.all([
+          fetch(`${API_BASE}/api/auth/ui-settings`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
+          fetch(`${API_BASE}/api/notifications/popup`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
+          fetch(`${API_BASE}/api/notifications`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
+        ]).then(([ui, popup, notifs]) => {
+          if (ui?.success && ui.settings && Object.keys(ui.settings).length > 0)
+            dispatch({ type: 'SET_UI_SETTINGS', payload: ui.settings });
+          if (popup?.notifications?.length > 0)
+            dispatch({ type: 'SET_NOTIF_POPUP', payload: popup.notifications });
+          if (notifs) {
+            const unread = (notifs.notifications || []).filter(n => !n.seen).length;
+            dispatch({ type: 'SET_NOTIF_UNREAD', payload: unread });
+          }
+        });
+      }
+    });
   }, [dispatch]);
 
   // Load symbols on mount — serve from localStorage instantly, then refresh from server
