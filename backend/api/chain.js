@@ -248,17 +248,9 @@ app.get("/api/symbols", (req, res) => {
       const requestedExpiry = req.query.expiry; // Optional: specific expiry
 
       // ── RAM CACHE HIT ──────────────────────────────────────────────────────
-      // liveCache keys use original folder casing (e.g. "Nifty_50").
-      // Try exact match first, then case-insensitive fallback.
-      if (!requestedExpiry) {
-        if (liveCache.has(safeSymbol)) {
-          return res.json(liveCache.get(safeSymbol));
-        }
-        // Case-insensitive fallback (frontend may send uppercased symbol)
-        const lowerReq = safeSymbol.toLowerCase();
-        for (const [k, v] of liveCache.entries()) {
-          if (k.toLowerCase() === lowerReq) return res.json(v);
-        }
+      // liveCache keys are UPPERCASE (e.g. "NIFTY_50") matching resolveSymbol().
+      if (!requestedExpiry && liveCache.has(safeSymbol)) {
+        return res.json(liveCache.get(safeSymbol));
       }
       // ── END CACHE HIT ──────────────────────────────────────────────────────
 

@@ -1126,7 +1126,9 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
         availableExpiries = ec.avail;
       } catch (_) {}
 
-      liveCache.set(safeInstrumentName, {
+      // Store with UPPERCASE key to match resolveSymbol() in chain.js
+      const cacheKey = safeInstrumentName.toUpperCase();
+      liveCache.set(cacheKey, {
         symbol: safeInstrumentName,
         expiry: expiryDate,
         date: istDateFolder,
