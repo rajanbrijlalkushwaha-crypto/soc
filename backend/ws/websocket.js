@@ -111,32 +111,27 @@ function loadLatestFromDisk(symbol) {
       raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     }
 
-    // Transform to frontend snapshot format (matches server.js liveCache format)
-    const rows = raw.oc || raw.option_chain || [];
-    const spotPrice = rows[0]?.underlying_spot_price || rows[0]?.sp || 0;
-    const chain = rows.map(row => {
-      const cc = row.call_options?.market_data || row.c || {};
-      const pc = row.put_options?.market_data  || row.p || {};
-      const cg = row.call_options?.option_greeks || {};
-      const pg = row.put_options?.option_greeks  || {};
-      return {
-        strike: row.strike_price || row.s,
-        call: {
-          pop: cg.pop||0, theta: cg.theta||0, gamma: cg.gamma||0,
-          vega: cg.vega||0, delta: cg.delta||0, iv: cg.iv||0,
-          oi_change: (cc.oi||0)-(cc.prev_oi||0),
-          oi: cc.oi||0, volume: cc.volume||0,
-          ltp: cc.ltp||0, ltp_change: (cc.ltp||0)-(cc.close_price||0)
-        },
-        put: {
-          pop: pg.pop||0, theta: pg.theta||0, gamma: pg.gamma||0,
-          vega: pg.vega||0, delta: pg.delta||0, iv: pg.iv||0,
-          oi_change: (pc.oi||0)-(pc.prev_oi||0),
-          oi: pc.oi||0, volume: pc.volume||0,
-          ltp: pc.ltp||0, ltp_change: (pc.ltp||0)-(pc.close_price||0)
-        }
-      };
-    });
+    // Transform compressed format (short keys from compressChainData) to frontend snapshot
+    // Saved format: { s: strike, u: spot, c: { po,th,ga,ve,de,iv,oc,oi,v,lp,lc }, p: {...} }
+    const rows = raw.oc || [];
+    const spotPrice = rows[0]?.u || 0;
+    const chain = rows.map(row => ({
+      strike: row.s,
+      call: {
+        pop: row.c?.po||0, theta: row.c?.th||0, gamma: row.c?.ga||0,
+        vega: row.c?.ve||0, delta: row.c?.de||0, iv: row.c?.iv||0,
+        oi_change: row.c?.oc||0,
+        oi: row.c?.oi||0, volume: row.c?.v||0,
+        ltp: row.c?.lp||0, ltp_change: row.c?.lc||0
+      },
+      put: {
+        pop: row.p?.po||0, theta: row.p?.th||0, gamma: row.p?.ga||0,
+        vega: row.p?.ve||0, delta: row.p?.de||0, iv: row.p?.iv||0,
+        oi_change: row.p?.oc||0,
+        oi: row.p?.oi||0, volume: row.p?.v||0,
+        ltp: row.p?.lp||0, ltp_change: row.p?.lc||0
+      }
+    }));
 
     const snap = {
       symbol:      symFolder,
