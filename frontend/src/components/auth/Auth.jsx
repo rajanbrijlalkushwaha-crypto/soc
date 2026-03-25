@@ -328,60 +328,42 @@ const AuthPage = () => {
 
   return (
     <div className="auth-container">
-      <div className="bg-grid"></div>
+      {/* Floating orbs */}
+      <div className="orb orb-1" />
+      <div className="orb orb-2" />
+      <div className="orb orb-3" />
 
       <div className="auth-box">
         {/* Left panel — welcome + features */}
         <div className="left-panel">
 
-          {/* Brand */}
+          {/* Brand — centered */}
           <div className="lp-brand-wrap">
             <div className="lp-welcome-sub">Welcome to</div>
-            <div className="lp-brand-big">SOC <span>Calculator</span></div>
+            <div className="lp-brand-big">soc<span>.ai.in</span></div>
             <div className="lp-brand-tag">AI-Powered Option Chain Analytics</div>
+            <div className="lp-live-badge"><span className="lp-dot" />Live Market Data</div>
           </div>
 
-          {/* Centre content */}
-          <div className="lp-center">
-            {/* Live ticker bar */}
-            <div className="hero-ticker">
-              <span className="hero-oc-live-dot" />
-              <span className="hero-ticker-item">NIFTY <b>24,180</b> <em>▲ +0.42%</em></span>
-              <span className="hero-ticker-sep">·</span>
-              <span className="hero-ticker-item">BANKNIFTY <b>52,340</b> <em className="down">▼ −0.18%</em></span>
-              <span className="hero-ticker-sep">·</span>
-              <span className="hero-ticker-item">SENSEX <b>79,850</b> <em>▲ +0.31%</em></span>
-            </div>
-
-            {/* Main headline */}
-            <div className="hero-headline">
-              <h1>Smart Option Chain<br /><em>Analysis Platform</em></h1>
-              <p className="hero-desc">
-                Trade smarter with real-time option chain data, advanced volume analysis,
-                and accurate support &amp; resistance levels.
-              </p>
-            </div>
-
-            {/* Feature list */}
-            <div className="hero-features">
-              {[
-                { icon: '⚡', title: 'Real-Time Data',         sub: 'WebSocket — no refresh needed'      },
-                { icon: '📊', title: 'Volume & OI Analysis',   sub: '1, 3, 5, 15 min breakdowns'         },
-                { icon: '🎯', title: 'Smart S&R Levels',       sub: 'OI-based support & resistance'       },
-                { icon: '🔗', title: 'Full Option Chain',      sub: 'OI, Volume, LTP, Greeks in one view' },
-                { icon: '✨', title: 'Highlight System',       sub: 'Top OI & volume change markers'      },
-                { icon: '🤖', title: 'AI Auto Analysis',       sub: 'Every 1 min during market hours'     },
-              ].map((f, i) => (
-                <div key={i} className="hero-feat">
-                  <div className="hero-feat-icon">{f.icon}</div>
-                  <div className="hero-feat-body">
-                    <div className="hero-feat-title">{f.title}</div>
-                    <div className="hero-feat-sub">{f.sub}</div>
-                  </div>
-                  <div className="hero-feat-check">✓</div>
+          {/* Feature list */}
+          <div className="hero-features">
+            {[
+              { icon: '⚡', title: 'Real-Time Data',        sub: 'WebSocket — no refresh needed'       },
+              { icon: '📊', title: 'Volume & OI Analysis',  sub: '1, 3, 5, 15 min breakdowns'          },
+              { icon: '🎯', title: 'Smart S&R Levels',      sub: 'OI-based support & resistance'        },
+              { icon: '🔗', title: 'Full Option Chain',     sub: 'OI, Volume, LTP, Greeks in one view'  },
+              { icon: '✨', title: 'Highlight System',      sub: 'Top OI & volume change markers'       },
+              { icon: '🤖', title: 'AI Auto Analysis',      sub: 'Every 1 min during market hours'      },
+            ].map((f, i) => (
+              <div key={i} className="hero-feat">
+                <div className="hero-feat-icon">{f.icon}</div>
+                <div className="hero-feat-body">
+                  <div className="hero-feat-title">{f.title}</div>
+                  <div className="hero-feat-sub">{f.sub}</div>
                 </div>
-              ))}
-            </div>
+                <div className="hero-feat-check">✓</div>
+              </div>
+            ))}
           </div>
 
           {/* Tagline */}
