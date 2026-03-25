@@ -264,4 +264,29 @@ async function publishUpdate(symbol, full, diff) {
   await pub.publish(`${REDIS_PFX}${sym}`, msg);
 }
 
-module.exports = { setupWebSocket, publishUpdate };
+/**
+ * On startup: scan Data/ for ALL symbol folders, load latest .json.gz for each,
+ * warm liveCache + Redis so every symbol is ready before any user connects.
+ * Old Redis keys for a symbol are overwritten each time new data arrives (TTL=120s).
+ */
+async function warmAllSymbolsFromDisk() {
+  const dataDir = path.join(__dirname, '..', 'Data');
+  if (!fs.existsSync(dataDir)) return;
+
+  const symFolders = fs.readdirSync(dataDir).filter(d => {
+    try { return fs.statSync(path.join(dataDir, d)).isDirectory(); } catch { return false; }
+  });
+
+  let loaded = 0;
+  for (const folder of symFolders) {
+    const symbol = folder.toUpperCase();
+    const snap   = loadLatestFromDisk(symbol);  // warms liveCache + Redis internally
+    if (snap) {
+      loaded++;
+      console.log(`[WS] ✅ Warmed ${symbol} from disk (${snap.chain?.length || 0} strikes)`);
+    }
+  }
+  console.log(`[WS] Disk warm-up done: ${loaded}/${symFolders.length} symbols ready in Redis`);
+}
+
+module.exports = { setupWebSocket, publishUpdate, warmAllSymbolsFromDisk };

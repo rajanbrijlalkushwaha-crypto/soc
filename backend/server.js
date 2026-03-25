@@ -2988,8 +2988,12 @@ async function startServer() {
     upstoxFeed(app, httpServer2, CONFIG);
 
     // ── WebSocket server (real-time diff delivery via Redis Pub/Sub) ──────────
-    const { setupWebSocket } = require('./ws/websocket');
+    const { setupWebSocket, warmAllSymbolsFromDisk } = require('./ws/websocket');
     setupWebSocket(httpServer2);
+
+    // Pre-warm ALL symbols from disk into Redis + liveCache before any user connects.
+    // New live data from Upstox overwrites Redis key (TTL resets), old data is gone.
+    warmAllSymbolsFromDisk().catch(e => console.error('[WS] Warm-up error:', e));
 
     // Serve built React frontend (catch-all u2014 must come after API routes)
     const frontendBuild = path.join(PATHS.FRONTEND, 'build');
