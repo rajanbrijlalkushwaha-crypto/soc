@@ -406,7 +406,7 @@ app.get("/api/symbols", (req, res) => {
       });
       
       
-      res.json({
+      const diskSnap = {
         symbol: safeSymbol,
         expiry: selectedExpiry,
         date: latestDate,
@@ -419,10 +419,21 @@ app.get("/api/symbols", (req, res) => {
         currentExpiry: futureExpiries[0] || selectedExpiry,
         nextExpiry: futureExpiries[1] || null,
         availableExpiries: expiriesWithTodayData
-      });
-      
+      };
+
+      // Warm liveCache + Redis so next request (WS or API) is instant
+      if (!requestedExpiry) {
+        liveCache.set(safeSymbol, diskSnap);
+        try {
+          const { publishUpdate } = require('../ws/websocket');
+          publishUpdate(safeSymbol, diskSnap, null).catch(() => {});
+        } catch (_) {}
+      }
+
+      res.json(diskSnap);
+
     } catch (error) {
-      res.status(500).json({ 
+      res.status(500).json({
         error: "Failed to load live data",
         message: error.message 
       });

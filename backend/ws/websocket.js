@@ -24,7 +24,11 @@
  */
 
 const WebSocket = require('ws');
+const path = require('path');
+const fs   = require('fs');
+const zlib = require('zlib');
 const { pub, sub } = require('./redis');
+const liveCache = require('../liveCache');
 
 const WS_PATH    = '/ws';          // WebSocket endpoint path
 const REDIS_PFX  = 'WS:';         // Redis channel prefix e.g. "WS:NIFTY"
@@ -63,15 +67,123 @@ async function ensureRedisSubscription(symbol) {
   }
 }
 
-/** Send full snapshot to one WebSocket client */
+/**
+ * Load latest snapshot from disk for a symbol.
+ * Scans Data/{symbol}/{expiry}/{date}/ for the newest .json.gz file.
+ */
+function loadLatestFromDisk(symbol) {
+  try {
+    const dataDir = path.join(__dirname, '..', 'Data');
+    if (!fs.existsSync(dataDir)) return null;
+
+    // Case-insensitive folder match
+    const symLower = symbol.toLowerCase();
+    const symFolder = fs.readdirSync(dataDir).find(d => d.toLowerCase() === symLower);
+    if (!symFolder) return null;
+
+    const symPath = path.join(dataDir, symFolder);
+    const today   = new Date().toISOString().split('T')[0];
+
+    // Pick nearest future expiry (or most recent)
+    const expiries = fs.readdirSync(symPath)
+      .filter(e => fs.statSync(path.join(symPath, e)).isDirectory()).sort();
+    const future = expiries.filter(e => e >= today);
+    const expiry = future[0] || expiries.at(-1);
+    if (!expiry) return null;
+
+    const expPath   = path.join(symPath, expiry);
+    const dates     = fs.readdirSync(expPath)
+      .filter(d => fs.statSync(path.join(expPath, d)).isDirectory()).sort();
+    const dateDir   = dates.at(-1);
+    if (!dateDir) return null;
+
+    const datePath  = path.join(expPath, dateDir);
+    const files     = fs.readdirSync(datePath)
+      .filter(f => f.endsWith('.json.gz') || f.endsWith('.json')).sort();
+    const latest    = files.at(-1);
+    if (!latest) return null;
+
+    const filePath  = path.join(datePath, latest);
+    let raw;
+    if (latest.endsWith('.gz')) {
+      raw = JSON.parse(zlib.gunzipSync(fs.readFileSync(filePath)).toString());
+    } else {
+      raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+
+    // Transform to frontend snapshot format (matches server.js liveCache format)
+    const rows = raw.oc || raw.option_chain || [];
+    const spotPrice = rows[0]?.underlying_spot_price || rows[0]?.sp || 0;
+    const chain = rows.map(row => {
+      const cc = row.call_options?.market_data || row.c || {};
+      const pc = row.put_options?.market_data  || row.p || {};
+      const cg = row.call_options?.option_greeks || {};
+      const pg = row.put_options?.option_greeks  || {};
+      return {
+        strike: row.strike_price || row.s,
+        call: {
+          pop: cg.pop||0, theta: cg.theta||0, gamma: cg.gamma||0,
+          vega: cg.vega||0, delta: cg.delta||0, iv: cg.iv||0,
+          oi_change: (cc.oi||0)-(cc.prev_oi||0),
+          oi: cc.oi||0, volume: cc.volume||0,
+          ltp: cc.ltp||0, ltp_change: (cc.ltp||0)-(cc.close_price||0)
+        },
+        put: {
+          pop: pg.pop||0, theta: pg.theta||0, gamma: pg.gamma||0,
+          vega: pg.vega||0, delta: pg.delta||0, iv: pg.iv||0,
+          oi_change: (pc.oi||0)-(pc.prev_oi||0),
+          oi: pc.oi||0, volume: pc.volume||0,
+          ltp: pc.ltp||0, ltp_change: (pc.ltp||0)-(pc.close_price||0)
+        }
+      };
+    });
+
+    const snap = {
+      symbol:      symFolder,
+      expiry,
+      date:        raw.m?.fi?.split(' ')[0] || dateDir,
+      time:        raw.m?.time_hhmmss || '00:00:00',
+      spot_price:  spotPrice,
+      chain,
+      fromDisk:    true   // flag so client knows it's historical
+    };
+
+    // Warm liveCache and Redis so next request is instant
+    liveCache.set(symbol, snap);
+    pub.setex(`${FULL_PFX}${symbol}`, FULL_TTL, JSON.stringify(snap)).catch(() => {});
+
+    return snap;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Send full snapshot to one WebSocket client — Redis → liveCache → disk */
 async function sendFull(ws, symbol) {
   try {
+    // 1. Redis (fastest — already serialised)
     const raw = await pub.get(`${FULL_PFX}${symbol}`);
-    if (!raw) {
-      ws.send(JSON.stringify({ type: 'error', message: `No data for ${symbol} yet` }));
+    if (raw) {
+      ws.send(JSON.stringify({ type: 'full', symbol, data: JSON.parse(raw) }));
       return;
     }
-    ws.send(JSON.stringify({ type: 'full', symbol, data: JSON.parse(raw) }));
+
+    // 2. liveCache (in-process RAM)
+    if (liveCache.has(symbol)) {
+      const snap = liveCache.get(symbol);
+      pub.setex(`${FULL_PFX}${symbol}`, FULL_TTL, JSON.stringify(snap)).catch(() => {});
+      ws.send(JSON.stringify({ type: 'full', symbol, data: snap }));
+      return;
+    }
+
+    // 3. Disk — read latest .json.gz (also warms liveCache + Redis for next time)
+    const snap = loadLatestFromDisk(symbol);
+    if (snap) {
+      ws.send(JSON.stringify({ type: 'full', symbol, data: snap }));
+      return;
+    }
+
+    ws.send(JSON.stringify({ type: 'error', message: `No data for ${symbol} yet` }));
   } catch (e) {
     ws.send(JSON.stringify({ type: 'error', message: 'Failed to load snapshot' }));
   }
