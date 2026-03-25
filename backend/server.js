@@ -646,11 +646,15 @@ function pushToBuffer(line) {
   if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
 }
 
-// Intercept ALL console.log / console.error so WS, Redis, and other modules show up
+// Intercept ALL console.log / console.error — safe stringify, never throws
 const _origLog   = console.log.bind(console);
 const _origError = console.error.bind(console);
-console.log   = (...args) => { const line = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '); pushToBuffer(line); _origLog(...args); };
-console.error = (...args) => { const line = '❌ ' + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '); pushToBuffer(line); _origError(...args); };
+function _safeStr(a) {
+  if (typeof a !== 'object' || a === null) return String(a);
+  try { return JSON.stringify(a); } catch { return '[Object]'; }
+}
+console.log   = (...args) => { try { pushToBuffer(args.map(_safeStr).join(' ')); } catch {} _origLog(...args); };
+console.error = (...args) => { try { pushToBuffer('❌ ' + args.map(_safeStr).join(' ')); } catch {} _origError(...args); };
 
 function log(message) {
   const ist = getCurrentIST();
@@ -1402,26 +1406,36 @@ function startAutoRefresh() {
 }
 
 function startFetching(isScheduled = false) {
+  // If already running, stop first then restart fresh
   if (serverState.autoRefreshInterval) {
-    return false;
+    clearInterval(serverState.autoRefreshInterval);
+    serverState.autoRefreshInterval = null;
+    log('🔄 Restarting data fetching...');
   }
-  
+
   if (!isScheduled) {
     serverState.isManualRunning = true;
   } else {
     serverState.isScheduledRunning = true;
   }
-  
+
   const instruments = CONFIG.INSTRUMENTS || [CONFIG.INSTRUMENT_KEY];
   log(`▶️ Starting data fetching for ${instruments.length} instruments (${isScheduled ? 'SCHEDULED' : 'MANUAL'})`);
 
-  // Warm expiry cache first (sequential, rate-limit safe), then start interval
-  warmExpiryCache().then(() => {
-    updateAllInstruments();
-    serverState.autoRefreshInterval = setInterval(() => {
+  // Warm expiry cache first, then start interval
+  warmExpiryCache()
+    .then(() => {
       updateAllInstruments();
-    }, CONFIG.REFRESH_INTERVAL);
-  });
+      serverState.autoRefreshInterval = setInterval(() => {
+        updateAllInstruments();
+      }, CONFIG.REFRESH_INTERVAL);
+      log(`✅ Fetching active — every ${CONFIG.REFRESH_INTERVAL / 1000}s`);
+    })
+    .catch(e => {
+      log(`❌ startFetching failed: ${e.message}`);
+      serverState.isManualRunning = false;
+      serverState.isScheduledRunning = false;
+    });
 
   return true;
 }
