@@ -1145,7 +1145,7 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
 
       // Store with UPPERCASE key to match resolveSymbol() in chain.js
       const cacheKey = safeInstrumentName.toUpperCase();
-      liveCache.set(cacheKey, {
+      const newSnapshot = {
         symbol: safeInstrumentName,
         expiry: expiryDate,
         date: istDateFolder,
@@ -1157,7 +1157,20 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
         currentExpiry,
         nextExpiry,
         availableExpiries
-      });
+      };
+
+      // Compute diff vs previous snapshot (for WebSocket diff delivery)
+      const prevSnapshot = liveCache.get(cacheKey);
+      const { diffSnapshot } = require('./ws/diff');
+      const diff = diffSnapshot(prevSnapshot, newSnapshot);
+
+      liveCache.set(cacheKey, newSnapshot);
+
+      // Publish full + diff to WebSocket clients via Redis Pub/Sub (fire-and-forget)
+      try {
+        const { publishUpdate } = require('./ws/websocket');
+        publishUpdate(cacheKey, newSnapshot, diff).catch(() => {});
+      } catch (_) {}
 
       // ── Feed spot price to chart candle builder (no extra API call) ────────
       // Reuses the spot price already fetched with option chain data
@@ -2973,6 +2986,10 @@ async function startServer() {
     const httpServer2 = require('http').createServer(app);
     const upstoxFeed = require('./api/upstoxFeed');
     upstoxFeed(app, httpServer2, CONFIG);
+
+    // ── WebSocket server (real-time diff delivery via Redis Pub/Sub) ──────────
+    const { setupWebSocket } = require('./ws/websocket');
+    setupWebSocket(httpServer2);
 
     // Serve built React frontend (catch-all u2014 must come after API routes)
     const frontendBuild = path.join(PATHS.FRONTEND, 'build');
