@@ -636,11 +636,25 @@ function getCurrentIST() {
 }
 
 // MINIMAL LOGGING - Only essential messages
-function log(message, type = "INFO") {
+// ── In-memory log ring buffer (last 1000 lines) ───────────────────────────────
+const LOG_BUFFER_MAX = 1000;
+const logBuffer = [];
+
+function pushToBuffer(line) {
+  const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+  logBuffer.push(`[${ts}] ${line}`);
+  if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+}
+
+// Intercept ALL console.log / console.error so WS, Redis, and other modules show up
+const _origLog   = console.log.bind(console);
+const _origError = console.error.bind(console);
+console.log   = (...args) => { const line = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '); pushToBuffer(line); _origLog(...args); };
+console.error = (...args) => { const line = '❌ ' + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '); pushToBuffer(line); _origError(...args); };
+
+function log(message) {
   const ist = getCurrentIST();
-  const logMessage = `[${ist.time}] ${message}`;
-  console.log(logMessage);
-  // Skip file logging for speed
+  console.log(`[${ist.time}] ${message}`);
 }
 
 function ensureDirectoryExists(dirPath) {
@@ -3102,5 +3116,6 @@ module.exports = {
   serverState,
   CONFIG,
   getInstrumentName,
-  createSafeFolderName
+  createSafeFolderName,
+  logBuffer
 };

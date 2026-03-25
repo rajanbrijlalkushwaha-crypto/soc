@@ -268,54 +268,54 @@ module.exports = function (app) {
   app.post("/api/admin/clear-logs", (req, res) => {
     try {
       const server = require("../server.js");
-      
+
+      // Clear in-memory buffer
+      if (server.logBuffer) server.logBuffer.splice(0, server.logBuffer.length);
+
+      // Clear log file if exists
       if (fs.existsSync(server.CONFIG.LOG_FILE)) {
         fs.writeFileSync(server.CONFIG.LOG_FILE, "");
-        server.log("Logs cleared by admin");
       }
-      
-      res.json({
-        success: true,
-        message: "Logs cleared successfully"
-      });
+
+      server.log("Logs cleared by admin");
+      res.json({ success: true, message: "Logs cleared successfully" });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error clearing logs",
-        error: error.message
-      });
+      res.status(500).json({ success: false, message: "Error clearing logs", error: error.message });
     }
   });
 
-  // Admin: Get recent logs
+  // Admin: Get recent logs — in-memory buffer first, PM2 log file as fallback
   app.get("/api/admin/logs", (req, res) => {
     try {
       const server = require("../server.js");
-      const lines = parseInt(req.query.lines) || 50;
-      
-      if (!fs.existsSync(server.CONFIG.LOG_FILE)) {
-        return res.json({
-          success: true,
-          logs: [],
-          total_lines: 0
-        });
+      const lines  = parseInt(req.query.lines) || 200;
+
+      // 1. Serve from in-memory ring buffer (captures ALL console.log output)
+      if (server.logBuffer && server.logBuffer.length > 0) {
+        const recent = server.logBuffer.slice(-lines);
+        return res.json({ success: true, logs: recent, total_lines: server.logBuffer.length, source: 'buffer' });
       }
-      
-      const logContent = fs.readFileSync(server.CONFIG.LOG_FILE, "utf8");
-      const logLines = logContent.split("\n").filter(line => line.trim());
-      
-      res.json({
-        success: true,
-        logs: logLines.slice(-lines),
-        total_lines: logLines.length,
-        log_file: server.CONFIG.LOG_FILE
-      });
+
+      // 2. Fallback: read PM2 stdout log file
+      const os = require('os');
+      const pm2Log = require('path').join(os.homedir(), '.pm2', 'logs', 'soc-out.log');
+      const pm2Err = require('path').join(os.homedir(), '.pm2', 'logs', 'soc-error.log');
+
+      let allLines = [];
+      for (const f of [pm2Log, pm2Err]) {
+        if (fs.existsSync(f)) {
+          const content = fs.readFileSync(f, 'utf8');
+          allLines = allLines.concat(content.split('\n').filter(l => l.trim()));
+        }
+      }
+
+      if (allLines.length > 0) {
+        return res.json({ success: true, logs: allLines.slice(-lines), total_lines: allLines.length, source: 'pm2' });
+      }
+
+      res.json({ success: true, logs: [], total_lines: 0, source: 'none' });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error reading logs",
-        error: error.message
-      });
+      res.status(500).json({ success: false, message: "Error reading logs", error: error.message });
     }
   });
 };
