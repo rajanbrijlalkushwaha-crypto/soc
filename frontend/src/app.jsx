@@ -136,36 +136,48 @@ function AppContent() {
     } catch (_) {}
   }, [state.user, state.symbols, dispatch]);
 
-  // ── WebSocket live data — replaces 5s polling ─────────────────────────────
+  // ── WebSocket live data — primary delivery ────────────────────────────────
   const wsSymbol = state.historicalMode ? null : state.currentSymbol;
   const { data: wsData, connected: wsConnected } = useOptionChainWS(wsSymbol);
   const wsFallbackRef = useRef(null);
+  const wsDataReceivedRef = useRef(false);
 
-  // Push WS data into app state whenever it arrives
+  // Push WS data into app state the moment it arrives
   useEffect(() => {
     if (!wsData) return;
+    wsDataReceivedRef.current = true;
     dispatch({ type: 'SET_LIVE_DATA', payload: wsData });
   }, [wsData, dispatch]);
 
-  // Fallback: if WS not connected after 6s, poll via API every 10s
+  // On symbol change: immediately fetch once from API so data shows instantly,
+  // then WS takes over. Also handles WS disconnected fallback (poll every 8s).
   useEffect(() => {
     if (!state.currentSymbol || state.historicalMode) return;
+    wsDataReceivedRef.current = false;
     clearInterval(wsFallbackRef.current);
-    if (wsConnected) return;
 
-    const loadLiveFallback = async () => {
+    const loadOnce = async () => {
+      if (wsDataReceivedRef.current) return; // WS was faster — skip
       try {
         const data = await fetchLiveData(state.currentSymbol);
-        dispatch({ type: 'SET_LIVE_DATA', payload: data });
+        if (!wsDataReceivedRef.current) dispatch({ type: 'SET_LIVE_DATA', payload: data });
       } catch (_) {}
     };
 
-    const t = setTimeout(() => {
-      loadLiveFallback();
-      wsFallbackRef.current = setInterval(loadLiveFallback, 10000);
-    }, 6000);
+    // Fire immediately — race with WS FULL (whichever arrives first wins)
+    loadOnce();
 
-    return () => { clearTimeout(t); clearInterval(wsFallbackRef.current); };
+    // If WS stays disconnected, keep polling every 8s
+    if (!wsConnected) {
+      wsFallbackRef.current = setInterval(async () => {
+        try {
+          const data = await fetchLiveData(state.currentSymbol);
+          dispatch({ type: 'SET_LIVE_DATA', payload: data });
+        } catch (_) {}
+      }, 8000);
+    }
+
+    return () => clearInterval(wsFallbackRef.current);
   }, [state.currentSymbol, state.historicalMode, wsConnected, dispatch]);
 
   // Historical shifting data — only in historical mode (reads from disk, no polling needed)

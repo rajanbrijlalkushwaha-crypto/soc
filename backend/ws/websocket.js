@@ -278,9 +278,11 @@ async function warmAllSymbolsFromDisk() {
   });
 
   let loaded = 0;
+  // Process one symbol per event-loop tick — never blocks the server
   for (const folder of symFolders) {
+    await new Promise(resolve => setImmediate(resolve));   // yield to event loop
     const symbol = folder.toUpperCase();
-    const snap   = loadLatestFromDisk(symbol);  // warms liveCache + Redis internally
+    const snap   = loadLatestFromDisk(symbol);
     if (snap) {
       loaded++;
       console.log(`[WS] ✅ Warmed ${symbol} from disk (${snap.chain?.length || 0} strikes)`);
