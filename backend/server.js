@@ -20,6 +20,10 @@ const { PATHS } = require('./config/paths');
 // In-memory live data cache
 const liveCache = require('./liveCache');
 
+// WS + diff — required once here so the hot path never pays module-resolution cost
+const { diffSnapshot }  = require('./ws/diff');
+const { publishUpdate } = require('./ws/websocket');
+
 // ✅ REACT INTEGRATION
 const reactBuildPath = path.join(PATHS.FRONTEND, 'build');
 let adminState = { isRunning: false, lastUpdate: new Date(), dataCount: 0 };
@@ -1179,16 +1183,12 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
 
       // Compute diff vs previous snapshot (for WebSocket diff delivery)
       const prevSnapshot = liveCache.get(cacheKey);
-      const { diffSnapshot } = require('./ws/diff');
       const diff = diffSnapshot(prevSnapshot, newSnapshot);
 
       liveCache.set(cacheKey, newSnapshot);
 
       // Publish full + diff to WebSocket clients via Redis Pub/Sub (fire-and-forget)
-      try {
-        const { publishUpdate } = require('./ws/websocket');
-        publishUpdate(cacheKey, newSnapshot, diff).catch(() => {});
-      } catch (_) {}
+      publishUpdate(cacheKey, newSnapshot, diff).catch(() => {});
 
       // ── Feed spot price to chart candle builder (no extra API call) ────────
       // Reuses the spot price already fetched with option chain data

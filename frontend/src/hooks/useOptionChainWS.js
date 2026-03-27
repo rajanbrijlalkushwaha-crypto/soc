@@ -34,12 +34,13 @@ export function useOptionChainWS(symbol) {
   const [error,     setError]     = useState(null);
 
   const wsRef         = useRef(null);
-  const symbolRef     = useRef(symbol);
+  const symbolRef     = useRef(symbol);   // always current symbol (for onopen callback)
+  const prevSymbolRef = useRef(null);     // last symbol we sent subscribe for
   const retryCountRef = useRef(0);
   const pingRef       = useRef(null);
   const retryRef      = useRef(null);
 
-  // Keep symbolRef current so callbacks always see latest value
+  // Keep symbolRef current so the onopen callback subscribes to the right symbol
   useEffect(() => { symbolRef.current = symbol; }, [symbol]);
 
   // ── Merge DIFF into current state ─────────────────────────────────────────
@@ -93,8 +94,10 @@ export function useOptionChainWS(symbol) {
       setError(null);
       retryCountRef.current = 0;
 
-      // Subscribe to current symbol
-      ws.send(JSON.stringify({ action: 'subscribe', symbol: symbolRef.current }));
+      // Subscribe to current symbol and record it as the active subscription
+      const sym = symbolRef.current;
+      ws.send(JSON.stringify({ action: 'subscribe', symbol: sym }));
+      prevSymbolRef.current = sym;
 
       // Heartbeat
       pingRef.current = setInterval(() => {
@@ -143,18 +146,21 @@ export function useOptionChainWS(symbol) {
   }, [connect, symbol]);
 
   // ── Symbol change: unsubscribe old, subscribe new, clear stale data ───────
+  // prevSymbolRef tracks the last symbol we actually subscribed to so we can
+  // correctly unsubscribe it — symbolRef.current is already updated to `symbol`
+  // by the time this effect runs, so we cannot use it as "previous".
   useEffect(() => {
     if (!symbol) return;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    const prevSymbol = symbolRef.current;
-    if (prevSymbol && prevSymbol !== symbol) {
-      ws.send(JSON.stringify({ action: 'unsubscribe', symbol: prevSymbol }));
+    if (prevSymbolRef.current && prevSymbolRef.current !== symbol) {
+      ws.send(JSON.stringify({ action: 'unsubscribe', symbol: prevSymbolRef.current }));
     }
 
     setData(null);
     ws.send(JSON.stringify({ action: 'subscribe', symbol }));
+    prevSymbolRef.current = symbol;
   }, [symbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { data, connected, error };

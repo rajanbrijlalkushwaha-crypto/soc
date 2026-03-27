@@ -23,17 +23,22 @@
  *     JSON-stringified diff message, broadcast by whichever process computed it.
  */
 
-const WebSocket = require('ws');
-const path = require('path');
-const fs   = require('fs');
-const zlib = require('zlib');
+const WebSocket  = require('ws');
+const path       = require('path');
+const fs         = require('fs');
+const fsPromises = require('fs').promises;
+const zlib       = require('zlib');
+const { promisify } = require('util');
 const { pub, sub } = require('./redis');
 const liveCache = require('../liveCache');
 
-const WS_PATH    = '/ws';          // WebSocket endpoint path
-const REDIS_PFX  = 'WS:';         // Redis channel prefix e.g. "WS:NIFTY"
-const FULL_PFX   = 'WS_FULL:';    // Redis key prefix for full data e.g. "WS_FULL:NIFTY"
-const FULL_TTL   = 120;           // seconds — full data expires if no updates
+const gunzipAsync = promisify(zlib.gunzip);
+
+const WS_PATH       = '/ws';   // WebSocket endpoint path
+const REDIS_PFX     = 'WS:';  // Redis channel prefix  e.g. "WS:NIFTY"
+const FULL_PFX      = 'WS_FULL:'; // Redis key prefix  e.g. "WS_FULL:NIFTY"
+const FULL_TTL      = 120;     // seconds — full data expires if no updates
+const HEARTBEAT_MS  = 30_000;  // ping interval — detect dead connections
 
 // ── State ─────────────────────────────────────────────────────────────────────
 // clients: Map<WebSocket, Set<symbol>>
@@ -68,54 +73,64 @@ async function ensureRedisSubscription(symbol) {
 }
 
 /**
- * Load latest snapshot from disk for a symbol.
+ * Load latest snapshot from disk for a symbol — fully async, never blocks event loop.
  * Scans Data/{symbol}/{expiry}/{date}/ for the newest .json.gz file.
  */
-function loadLatestFromDisk(symbol) {
+async function loadLatestFromDisk(symbol) {
   try {
     const dataDir = path.join(__dirname, '..', 'Data');
     if (!fs.existsSync(dataDir)) return null;
 
     // Case-insensitive folder match
-    const symLower = symbol.toLowerCase();
-    const symFolder = fs.readdirSync(dataDir).find(d => d.toLowerCase() === symLower);
+    const symLower  = symbol.toLowerCase();
+    const entries   = await fsPromises.readdir(dataDir);
+    const symFolder = entries.find(d => d.toLowerCase() === symLower);
     if (!symFolder) return null;
 
     const symPath = path.join(dataDir, symFolder);
     const today   = new Date().toISOString().split('T')[0];
 
-    // Pick nearest future expiry (or most recent)
-    const expiries = fs.readdirSync(symPath)
-      .filter(e => fs.statSync(path.join(symPath, e)).isDirectory()).sort();
+    // Pick nearest future expiry (or most recent past)
+    const expDirs  = await fsPromises.readdir(symPath);
+    const expiries = (await Promise.all(expDirs.map(async e => {
+      const s = await fsPromises.stat(path.join(symPath, e)).catch(() => null);
+      return s?.isDirectory() ? e : null;
+    }))).filter(Boolean).sort();
+
     const future = expiries.filter(e => e >= today);
     const expiry = future[0] || expiries.at(-1);
     if (!expiry) return null;
 
-    const expPath   = path.join(symPath, expiry);
-    const dates     = fs.readdirSync(expPath)
-      .filter(d => fs.statSync(path.join(expPath, d)).isDirectory()).sort();
-    const dateDir   = dates.at(-1);
+    const expPath  = path.join(symPath, expiry);
+    const dateDirs = await fsPromises.readdir(expPath);
+    const dates    = (await Promise.all(dateDirs.map(async d => {
+      const s = await fsPromises.stat(path.join(expPath, d)).catch(() => null);
+      return s?.isDirectory() ? d : null;
+    }))).filter(Boolean).sort();
+
+    const dateDir = dates.at(-1);
     if (!dateDir) return null;
 
-    const datePath  = path.join(expPath, dateDir);
-    const files     = fs.readdirSync(datePath)
-      .filter(f => f.endsWith('.json.gz') || f.endsWith('.json')).sort();
-    const latest    = files.at(-1);
+    const datePath = path.join(expPath, dateDir);
+    const allFiles = await fsPromises.readdir(datePath);
+    const files    = allFiles.filter(f => f.endsWith('.json.gz') || f.endsWith('.json')).sort();
+    const latest   = files.at(-1);
     if (!latest) return null;
 
-    const filePath  = path.join(datePath, latest);
+    const filePath = path.join(datePath, latest);
+    const buf      = await fsPromises.readFile(filePath);
     let raw;
     if (latest.endsWith('.gz')) {
-      raw = JSON.parse(zlib.gunzipSync(fs.readFileSync(filePath)).toString());
+      raw = JSON.parse((await gunzipAsync(buf)).toString());
     } else {
-      raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      raw = JSON.parse(buf.toString('utf8'));
     }
 
     // Transform compressed format (short keys from compressChainData) to frontend snapshot
     // Saved format: { s: strike, u: spot, c: { po,th,ga,ve,de,iv,oc,oi,v,lp,lc }, p: {...} }
-    const rows = raw.oc || [];
+    const rows      = raw.oc || [];
     const spotPrice = rows[0]?.u || 0;
-    const chain = rows.map(row => ({
+    const chain     = rows.map(row => ({
       strike: row.s,
       call: {
         pop: row.c?.po||0, theta: row.c?.th||0, gamma: row.c?.ga||0,
@@ -134,13 +149,13 @@ function loadLatestFromDisk(symbol) {
     }));
 
     const snap = {
-      symbol:      symFolder,
+      symbol:     symFolder,
       expiry,
-      date:        raw.m?.fi?.split(' ')[0] || dateDir,
-      time:        raw.m?.time_hhmmss || '00:00:00',
-      spot_price:  spotPrice,
+      date:       raw.m?.fi?.split(' ')[0] || dateDir,
+      time:       raw.m?.time_hhmmss || '00:00:00',
+      spot_price: spotPrice,
       chain,
-      fromDisk:    true   // flag so client knows it's historical
+      fromDisk:   true   // flag so client knows it's historical
     };
 
     // Warm liveCache and Redis so next request is instant
@@ -195,7 +210,27 @@ async function sendFull(ws, symbol) {
 function setupWebSocket(httpServer) {
   const wss = new WebSocket.Server({ server: httpServer, path: WS_PATH });
 
-  wss.on('connection', (ws, req) => {
+  // ── Server-side heartbeat — detect and evict dead connections ─────────────
+  // A client that drops off the network won't trigger 'close'. Without this,
+  // dead connections pile up in the clients Map and waste memory + send attempts.
+  const heartbeatTimer = setInterval(() => {
+    for (const [ws] of clients) {
+      if (!ws.isAlive) {
+        clients.delete(ws);
+        ws.terminate();
+        return;
+      }
+      ws.isAlive = false;
+      ws.ping();    // browser responds automatically with pong
+    }
+  }, HEARTBEAT_MS);
+
+  wss.on('close', () => clearInterval(heartbeatTimer));
+
+  wss.on('connection', (ws) => {
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });   // reset liveness flag on pong
+
     clients.set(ws, new Set());
 
     ws.on('message', async (raw) => {
