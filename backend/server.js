@@ -1186,7 +1186,7 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
         const kb = (compressed.length / 1024).toFixed(2);
         fs.promises.writeFile(filePath, compressed)
           .then(() => {
-            log(`💾 Saved ${safeInstrumentName} | expiry:${expiryDate} | ${kb} KB`);
+            // per-stock save log suppressed — cycle summary logged by updateAllInstruments
             serverState.latestFile = {
               path: filePath, instrument: safeInstrumentName,
               expiry: expiryDate, date: istDateFolder, filename: fileName,
@@ -1276,7 +1276,7 @@ async function updateAllInstruments() {
       }
     }
     const successCount = allResults.filter(r => r.success).length;
-    log(`✅ ${getCurrentIST().time} | Updated ${successCount}/${instruments.length} instruments`);
+    log(`✅ ${getCurrentIST().time} | Data saved (${successCount}/${instruments.length})`);
     return allResults;
   } finally {
     serverState.isUpdating = false;
@@ -1366,7 +1366,7 @@ async function warmExpiryCache(force = false) {
     if (fromDisk?.length) {
       // Use disk — no API call needed
       _contractCache[inst] = { dates: fromDisk, day: today };
-      log(`📅 Expiry from disk: ${getInstrumentName(inst)} → ${fromDisk[0]}`);
+      // per-instrument expiry log suppressed — summary below
     } else {
       apiNeeded.push(inst); // no data on disk yet
     }
@@ -1485,11 +1485,11 @@ function checkSchedule() {
 
 setInterval(checkSchedule, 60000);
 
-// Re-warm expiry cache daily at 09:01 IST (after market opens, fresh contracts available)
+// Re-warm expiry cache daily at 09:15 IST (market open, fresh contracts available)
 setInterval(() => {
   const ist = getCurrentIST();
   const hhmm = ist.time.substring(0, 5);
-  if (hhmm === '09:01') warmExpiryCache(true).catch(() => {}); // force daily refresh
+  if (hhmm === '09:15') warmExpiryCache(true).catch(() => {}); // force daily refresh
 }, 60000);
 
 // ── 9:10 AM Bromos gap-open check ─────────────────────────────────────────────
