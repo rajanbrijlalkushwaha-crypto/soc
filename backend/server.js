@@ -1100,18 +1100,11 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
     
     const fileName = `${safeInstrumentName}_${expiryDate}_${currentIST.forFilename}.json.gz`;
     const filePath = path.join(dateDir, fileName);
-    
-    const compressedData = zlib.gzipSync(JSON.stringify(dataToSave));
-    fs.writeFileSync(filePath, compressedData);
 
-    const fileSizeKB = (compressedData.length / 1024).toFixed(2);
-    log(`💾 Saved ${safeInstrumentName} | expiry:${expiryDate} | ${fileSizeKB} KB → ${fileName}`);
-
-    // ── RAM CACHE ────────────────────────────────────────────────────────────
-    // Transform raw chain data to the frontend format and store in memory.
-    // /api/live/:symbol will serve this directly — zero disk I/O per request.
+    // ── STEP 1: RAM CACHE + WS PUBLISH (immediate, before any disk I/O) ──────
+    // Users receive live data NOW. Disk write happens after in the background.
     try {
-      const rawRows = chainData.data || [];
+      const rawRows   = chainData.data || [];
       const spotPrice = rawRows[0]?.underlying_spot_price || 0;
 
       const cacheChain = rawRows.map(row => {
@@ -1138,90 +1131,76 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
         };
       });
 
-      // Compute expiry info (quick dir scan — once per 5s, not per request)
+      // Expiry dir scan — cached per instrument per date, runs at most once/day
       const today = new Date().toISOString().split('T')[0];
       let isExpiryDay = false, currentExpiry = expiryDate, nextExpiry = null;
       let availableExpiries = [];
       try {
         const symDir = path.join('Data', safeInstrumentName);
-        const cacheKey = `${safeInstrumentName}|${istDateFolder}`;
-        // Scan once per instrument per date — never re-scan during the same session/day
-        if (!_expiryCache[cacheKey]) {
+        const ecKey  = `${safeInstrumentName}|${istDateFolder}`;
+        if (!_expiryCache[ecKey]) {
           const allExpiries = fs.readdirSync(symDir)
             .filter(e => fs.statSync(path.join(symDir, e)).isDirectory()).sort();
           const futureExp = allExpiries.filter(e => e >= today);
           const avail = allExpiries.filter(e => {
-            const expPath = path.join(symDir, e);
-            const dFolders = fs.readdirSync(expPath)
-              .filter(d => fs.statSync(path.join(expPath, d)).isDirectory()).sort();
+            const dFolders = fs.readdirSync(path.join(symDir, e))
+              .filter(d => fs.statSync(path.join(symDir, e, d)).isDirectory()).sort();
             return dFolders.at(-1) === istDateFolder;
           });
-          _expiryCache[cacheKey] = { allExpiries, futureExp, avail };
+          _expiryCache[ecKey] = { allExpiries, futureExp, avail };
         }
-        const ec = _expiryCache[cacheKey];
+        const ec      = _expiryCache[ecKey];
         isExpiryDay      = ec.futureExp[0] === today;
         currentExpiry    = ec.futureExp[0] || expiryDate;
         nextExpiry       = ec.futureExp[1] || null;
         availableExpiries = ec.avail;
       } catch (_) {}
 
-      // Store with UPPERCASE key to match resolveSymbol() in chain.js
-      const cacheKey = safeInstrumentName.toUpperCase();
+      const cacheKey    = safeInstrumentName.toUpperCase();
       const newSnapshot = {
-        symbol: safeInstrumentName,
-        expiry: expiryDate,
-        date: istDateFolder,
-        time: currentIST.time,
-        spot_price: spotPrice,
-        lot_size: getLotSize(instrumentKey),
-        chain: cacheChain,
-        isExpiryDay,
-        currentExpiry,
-        nextExpiry,
-        availableExpiries
+        symbol: safeInstrumentName, expiry: expiryDate,
+        date: istDateFolder, time: currentIST.time,
+        spot_price: spotPrice, lot_size: getLotSize(instrumentKey),
+        chain: cacheChain, isExpiryDay, currentExpiry, nextExpiry, availableExpiries
       };
 
-      // Compute diff vs previous snapshot (for WebSocket diff delivery)
       const prevSnapshot = liveCache.get(cacheKey);
-      const diff = diffSnapshot(prevSnapshot, newSnapshot);
-
+      const diff         = diffSnapshot(prevSnapshot, newSnapshot);
       liveCache.set(cacheKey, newSnapshot);
+      publishUpdate(cacheKey, newSnapshot, diff).catch(() => {}); // Redis Pub/Sub → WS clients
 
-      // Publish full + diff to WebSocket clients via Redis Pub/Sub (fire-and-forget)
-      publishUpdate(cacheKey, newSnapshot, diff).catch(() => {});
-
-      // ── Feed spot price to chart candle builder (no extra API call) ────────
-      // Reuses the spot price already fetched with option chain data
       if (spotPrice > 0) {
         try { require('./api/upstoxFeed').processTick(safeInstrumentName, spotPrice); } catch (_) {}
       }
     } catch (cacheErr) {
-      log(`⚠️ Cache update failed: ${cacheErr.message}`, 'WARNING');
+      log(`⚠️ Cache update failed: ${cacheErr.message}`);
     }
-    // ── END RAM CACHE ─────────────────────────────────────────────────────────
 
-    // Generate chart data (silent)
-    try {
-      if (generateAllChartData) generateAllChartData(safeInstrumentName, expiryDate, istDateFolder);
-    } catch (e) {}
+    // ── STEP 2: ASYNC DISK WRITE — fire-and-forget ────────────────────────────
+    // Deferred to next event-loop tick so any pending HTTP / login / WS requests
+    // are served first. gzip runs in libuv thread pool — never blocks main thread.
+    setImmediate(() => {
+      zlib.gzip(Buffer.from(JSON.stringify(dataToSave)), (gzErr, compressed) => {
+        if (gzErr) { log(`❌ Gzip failed for ${safeInstrumentName}: ${gzErr.message}`); return; }
+        const kb = (compressed.length / 1024).toFixed(2);
+        fs.promises.writeFile(filePath, compressed)
+          .then(() => {
+            log(`💾 Saved ${safeInstrumentName} | expiry:${expiryDate} | ${kb} KB`);
+            serverState.latestFile = {
+              path: filePath, instrument: safeInstrumentName,
+              expiry: expiryDate, date: istDateFolder, filename: fileName,
+              fetched_at_ist: currentIST.datetime, size_kb: kb, time_hhmmss: currentIST.time
+            };
+          })
+          .catch(writeErr => log(`❌ Disk write failed for ${safeInstrumentName}: ${writeErr.message}`));
+      });
+      // Chart generation also deferred — background, not user-facing
+      try {
+        if (generateAllChartData) generateAllChartData(safeInstrumentName, expiryDate, istDateFolder);
+      } catch (_) {}
+    });
 
-    serverState.latestFile = {
-      path: filePath,
-      instrument: safeInstrumentName,
-      expiry: expiryDate,
-      date: istDateFolder,
-      filename: fileName,
-      fetched_at_ist: currentIST.datetime,
-      size_kb: fileSizeKB,
-      time_hhmmss: currentIST.time
-    };
-    
-    return {
-      ...dataToSave,
-      saved_path: filePath,
-      size_kb: fileSizeKB,
-      time_hhmmss: currentIST.time
-    };
+    return { saved_path: filePath, size_kb: '~', time_hhmmss: currentIST.time };
     
   } catch (error) {
     log(`❌ Save failed: ${error.message}`, "ERROR");
@@ -1265,28 +1244,39 @@ async function updateOptionChain(instrumentKey = CONFIG.INSTRUMENT_KEY) {
     serverState.lastUpdate    = new Date().toISOString();
     serverState.lastUpdateIST = getCurrentIST().datetime;
     serverState.totalUpdates++;
-    return { name: getInstrumentName(instrumentKey), size_kb: saved.size_kb };
+    return { name: getInstrumentName(instrumentKey) };
   } catch (_) {
     return null; // 429 already logged in fetchOptionChain; other errors silenced here
   }
 }
 
-// UPDATE ALL INSTRUMENTS — all in parallel, one clean summary log per cycle
+// UPDATE ALL INSTRUMENTS
+// Processes in batches of CONCURRENCY to avoid flooding the event loop.
+// Between batches we yield (setImmediate) so login / WS / API requests
+// can be handled without waiting for the entire cycle to finish.
+const FETCH_CONCURRENCY = 10; // max simultaneous Upstox API calls
+
 async function updateAllInstruments() {
   if (serverState.isUpdating) return [];
   serverState.isUpdating = true;
+  const allResults = [];
   try {
     const instruments = CONFIG.INSTRUMENTS || [CONFIG.INSTRUMENT_KEY];
-    const settled = await Promise.allSettled(instruments.map(inst => updateOptionChain(inst)));
-    const saved = settled
-      .map(r => r.status === 'fulfilled' ? r.value : null)
-      .filter(Boolean);
-    if (saved.length > 0) {
-      const time = getCurrentIST().time;
-      const parts = saved.map(s => `${s.name}(${s.size_kb}KB)`).join(' ');
-      log(`✅ ${time} | Saved: ${parts}`);
+    for (let i = 0; i < instruments.length; i += FETCH_CONCURRENCY) {
+      const batch   = instruments.slice(i, i + FETCH_CONCURRENCY);
+      const settled = await Promise.allSettled(batch.map(inst => updateOptionChain(inst)));
+      allResults.push(...settled.map((r, j) => ({
+        instrument: batch[j],
+        success: r.status === 'fulfilled' && !!r.value
+      })));
+      // Yield to event loop between batches — pending HTTP/login requests get served here
+      if (i + FETCH_CONCURRENCY < instruments.length) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
     }
-    return settled.map((r, i) => ({ instrument: instruments[i], success: r.status === 'fulfilled' && !!r.value }));
+    const successCount = allResults.filter(r => r.success).length;
+    log(`✅ ${getCurrentIST().time} | Updated ${successCount}/${instruments.length} instruments`);
+    return allResults;
   } finally {
     serverState.isUpdating = false;
   }
