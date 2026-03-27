@@ -675,6 +675,7 @@ function ensureDirectoryExists(dirPath) {
 // Cache expiry dates per instrument per day — refreshed only once per IST day.
 // This prevents hammering Upstox /option/contract every 5 s × N instruments.
 const _contractCache = {}; // instrumentKey → { dates: [], day: 'YYYY-MM-DD' }
+let   _expiryCacheWarmDate = ''; // date of last warmExpiryCache() run — skip if same day
 
 async function getAllExpiryDates(instrumentKey = CONFIG.INSTRUMENT_KEY) {
   // Return cached result if it's still today's date
@@ -1347,9 +1348,17 @@ function getExpiriesFromDisk(instrumentKey) {
 // Warm the expiry cache:
 //   1. Use disk data folders — instant, no API call (works on every restart)
 //   2. Only call Upstox API if no data exists yet (first-ever run)
-async function warmExpiryCache() {
+async function warmExpiryCache(force = false) {
+  const today = getISTToday();
+
+  // Skip if already warmed today (e.g. schedule restart, admin Start button, PM2 reload).
+  // Pass force=true only for the deliberate 09:01 daily refresh.
+  if (!force && _expiryCacheWarmDate === today) {
+    log(`📅 Expiry cache already warm for ${today} — skipping`);
+    return;
+  }
+
   const instruments = CONFIG.INSTRUMENTS || [CONFIG.INSTRUMENT_KEY];
-  const today       = getISTToday();
   let apiNeeded     = [];
 
   for (const inst of instruments) {
@@ -1376,6 +1385,7 @@ async function warmExpiryCache() {
     }
   }
 
+  _expiryCacheWarmDate = today; // mark so subsequent calls today are skipped
   log(`📅 Expiry cache ready — data fetch starting.`);
 }
 
@@ -1479,7 +1489,7 @@ setInterval(checkSchedule, 60000);
 setInterval(() => {
   const ist = getCurrentIST();
   const hhmm = ist.time.substring(0, 5);
-  if (hhmm === '09:01') warmExpiryCache().catch(() => {});
+  if (hhmm === '09:01') warmExpiryCache(true).catch(() => {}); // force daily refresh
 }, 60000);
 
 // ── 9:10 AM Bromos gap-open check ─────────────────────────────────────────────
