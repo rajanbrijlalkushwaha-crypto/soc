@@ -1,34 +1,36 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useOptionChainWS } from './hooks/useOptionChainWS';
 import { AppProvider, useApp } from './context/AppContext';
+import { fetchSymbols, fetchLiveData, fetchLiveSignals, fetchShiftingData, fetchMCTRData, fetchStrategy40Data } from './services/api';
 import IndexPage from './components/Index/IndexPage';
 import SideNav from './components/sidenav/sidenav';
 import Topbar from './components/Topbar/topbar';
 import UISettings from './components/UISetting/UISettings';
 import OptionChainTable from './components/OptionChain/OptionChainTable';
-import LTPCalculator from './components/Calculator/LTPCalculator';
-import ShiftingModal from './components/Shifting/ShiftingModal';
-import SpotChartModal from './components/Chart/SpotChartModal';
-import OIChartModal from './components/Chart/OIChartModal';
-import OIChngModal from './components/Chart/OIChngModal';
 import Footer from './components/Footer/Footer';
-import SOCAIPanel from './components/SOCAI/SOCAIPanel';
-import PowerAIStockPanel from './components/PowerAI/PowerAIStockPanel';
-import HolidayListPanel from './components/Info/HolidayListPanel';
-import SupportPanel from './components/Info/SupportPanel';
-import ProfilePage from './components/Profile/ProfilePage';
-import AdminPanel from './components/admin/AdminPanel';
-import SubscriptionPage from './components/Subscription/SubscriptionPage';
-import TradingJournal from './components/Journal/TradingJournal';
-import TeamPage from './components/Team/TeamPage';
-import NotificationPanel from './components/Notifications/NotificationPanel';
 import NotifPopup from './components/Notifications/NotifPopup';
-import AITrainPanel from './components/AITrain/AITrainPanel';
-import AIStockPanel from './components/AIStock/AIStockPanel';
-import JoinMeetPage from './components/JoinMeet/JoinMeetPage';
-import SplitChart from './components/Chart/SplitChart';
 import SplitPane from './components/Layout/SplitPane';
-import { fetchSymbols, fetchLiveData, fetchLiveSignals, fetchShiftingData, fetchMCTRData, fetchStrategy40Data } from './services/api';
+
+// Lazy-loaded heavy components — only downloaded when first opened
+const LTPCalculator      = lazy(() => import('./components/Calculator/LTPCalculator'));
+const ShiftingModal      = lazy(() => import('./components/Shifting/ShiftingModal'));
+const SpotChartModal     = lazy(() => import('./components/Chart/SpotChartModal'));
+const OIChartModal       = lazy(() => import('./components/Chart/OIChartModal'));
+const OIChngModal        = lazy(() => import('./components/Chart/OIChngModal'));
+const SplitChart         = lazy(() => import('./components/Chart/SplitChart'));
+const SOCAIPanel         = lazy(() => import('./components/SOCAI/SOCAIPanel'));
+const PowerAIStockPanel  = lazy(() => import('./components/PowerAI/PowerAIStockPanel'));
+const HolidayListPanel   = lazy(() => import('./components/Info/HolidayListPanel'));
+const SupportPanel       = lazy(() => import('./components/Info/SupportPanel'));
+const ProfilePage        = lazy(() => import('./components/Profile/ProfilePage'));
+const AdminPanel         = lazy(() => import('./components/admin/AdminPanel'));
+const SubscriptionPage   = lazy(() => import('./components/Subscription/SubscriptionPage'));
+const TradingJournal     = lazy(() => import('./components/Journal/TradingJournal'));
+const TeamPage           = lazy(() => import('./components/Team/TeamPage'));
+const NotificationPanel  = lazy(() => import('./components/Notifications/NotificationPanel'));
+const AITrainPanel       = lazy(() => import('./components/AITrain/AITrainPanel'));
+const AIStockPanel       = lazy(() => import('./components/AIStock/AIStockPanel'));
+const JoinMeetPage       = lazy(() => import('./components/JoinMeet/JoinMeetPage'));
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -392,12 +394,12 @@ function AppContent() {
   };
 
   return (
-    <>
+    <Suspense fallback={null}>
       <SideNav />
       {renderMain()}
       <NotificationPanel />
       <NotifPopup />
-    </>
+    </Suspense>
   );
 }
 
