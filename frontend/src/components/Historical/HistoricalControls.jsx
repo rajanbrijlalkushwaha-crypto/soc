@@ -240,11 +240,10 @@ export default function HistoricalControls() {
         />
         {selectedTime && (
           <button
-            className="nav-btn"
-            style={{ marginLeft: 4, color: loadFailed ? '#f59e0b' : '#6b7280', fontSize: 12 }}
+            className={`nav-btn${loadFailed ? ' play-btn playing' : ''}`}
             onClick={() => loadSnapshot(selectedSymbol, selectedExpiry, selectedDate, selectedTime)}
           >
-            ⟳ Load
+            ⟳
           </button>
         )}
       </div>
