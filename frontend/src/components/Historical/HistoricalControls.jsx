@@ -25,11 +25,13 @@ export default function HistoricalControls() {
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
       const data = await fetchHistoricalSnapshot(sym, exp, date, time);
-      if (!data || !data.chain?.length) { setLoadFailed(true); return; }
+      if (!data || !data.chain?.length) { setLoadFailed(true); return false; }
       dispatch({ type: 'SET_LIVE_DATA', payload: { ...data, expiry: exp, date, time } });
+      return true;
     } catch (e) {
       console.error(e);
       setLoadFailed(true);
+      return false;
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
     }
@@ -41,7 +43,7 @@ export default function HistoricalControls() {
     const sym = state.currentSymbol;
     setSelectedSymbol(sym);
     setExpiries([]); setDates([]); setTimes([]);
-    setSelectedExpiry(''); setSelectedDate(''); setSelectedTime('');
+    setSelectedExpiry(''); setSelectedDate(''); setSelectedTime('09:15:00');
 
     (async () => {
       try {
@@ -76,8 +78,9 @@ export default function HistoricalControls() {
           const diff = Math.abs(secs - targetSecs);
           if (diff < bestDiff) { bestDiff = diff; best = t; }
         }
-        setSelectedTime(best.time);
-        await loadSnapshot(sym, lastExp, lastDate, best.time);
+        // Load nearest to 09:15 — only update time display if load succeeds
+        const ok = await loadSnapshot(sym, lastExp, lastDate, best.time);
+        if (ok) setSelectedTime(best.time);
       } catch (e) { console.error(e); }
     })();
   }, [state.historicalMode, state.currentSymbol, dispatch, loadSnapshot]);
