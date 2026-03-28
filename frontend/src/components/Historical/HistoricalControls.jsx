@@ -14,18 +14,22 @@ export default function HistoricalControls() {
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const [selectedExpiry, setSelectedExpiry] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
-  const [selectedTime, setSelectedTime] = useState('');
+  const [selectedTime, setSelectedTime] = useState('09:15:00');
   const [timeframe, setTimeframe] = useState('60');
   const [playing, setPlaying] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const playRef = useRef(null);
 
   const loadSnapshot = useCallback(async (sym, exp, date, time) => {
+    setLoadFailed(false);
     try {
       dispatch({ type: 'SET_LOADING', payload: true });
       const data = await fetchHistoricalSnapshot(sym, exp, date, time);
+      if (!data || !data.chain?.length) { setLoadFailed(true); return; }
       dispatch({ type: 'SET_LIVE_DATA', payload: { ...data, expiry: exp, date, time } });
     } catch (e) {
       console.error(e);
+      setLoadFailed(true);
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
     }
@@ -62,9 +66,18 @@ export default function HistoricalControls() {
           type: 'SET_HISTORICAL_SNAPSHOTS',
           payload: timeData.map(t => ({ symbol: sym, expiry: lastExp, date: lastDate, time: t.time })),
         });
-        const firstTime = timeData[0].time;
-        setSelectedTime(firstTime);
-        await loadSnapshot(sym, lastExp, lastDate, firstTime);
+        // Default to 09:15 — snap to nearest available
+        const targetSecs = 9 * 3600 + 15 * 60;
+        let best = timeData[0];
+        let bestDiff = Infinity;
+        for (const t of timeData) {
+          const parts = t.time.split(':').map(Number);
+          const secs = parts[0] * 3600 + parts[1] * 60 + (parts[2] || 0);
+          const diff = Math.abs(secs - targetSecs);
+          if (diff < bestDiff) { bestDiff = diff; best = t; }
+        }
+        setSelectedTime(best.time);
+        await loadSnapshot(sym, lastExp, lastDate, best.time);
       } catch (e) { console.error(e); }
     })();
   }, [state.historicalMode, state.currentSymbol, dispatch, loadSnapshot]);
@@ -220,11 +233,20 @@ export default function HistoricalControls() {
       <div className="time-list-container">
         <input
           type="time"
-          value={selectedTime ? selectedTime.substring(0, 5) : ''}
+          value={selectedTime ? selectedTime.substring(0, 5) : '09:15'}
           onChange={handleTimeChange}
           disabled={!times.length}
           step="60"
         />
+        {loadFailed && selectedTime && (
+          <button
+            className="nav-btn"
+            style={{ marginLeft: 4, color: '#f59e0b', fontSize: 12 }}
+            onClick={() => loadSnapshot(selectedSymbol, selectedExpiry, selectedDate, selectedTime)}
+          >
+            ⟳ Load
+          </button>
+        )}
       </div>
       <select className="timeframe-select" value={timeframe} onChange={e => setTimeframe(e.target.value)}>
         <option value="5">5s</option>
