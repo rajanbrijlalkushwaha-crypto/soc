@@ -43,7 +43,7 @@ function MainApp() {
 }
 
 function Root() {
-  if (window.location.pathname.startsWith('/admin')) return <AdminApp />;
+  if (window.location.pathname === '/admin') return <AdminApp />;
   return <MainApp />;
 }
 
