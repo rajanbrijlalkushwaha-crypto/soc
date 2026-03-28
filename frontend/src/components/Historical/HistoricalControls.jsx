@@ -238,10 +238,10 @@ export default function HistoricalControls() {
           disabled={!times.length}
           step="60"
         />
-        {loadFailed && selectedTime && (
+        {selectedTime && (
           <button
             className="nav-btn"
-            style={{ marginLeft: 4, color: '#f59e0b', fontSize: 12 }}
+            style={{ marginLeft: 4, color: loadFailed ? '#f59e0b' : '#6b7280', fontSize: 12 }}
             onClick={() => loadSnapshot(selectedSymbol, selectedExpiry, selectedDate, selectedTime)}
           >
             ⟳ Load
