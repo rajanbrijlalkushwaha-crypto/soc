@@ -243,7 +243,7 @@ export default function HistoricalControls() {
             className={`nav-btn${loadFailed ? ' play-btn playing' : ''}`}
             onClick={() => loadSnapshot(selectedSymbol, selectedExpiry, selectedDate, selectedTime)}
           >
-            ⟳
+            ⟳ Fetch Data
           </button>
         )}
       </div>
