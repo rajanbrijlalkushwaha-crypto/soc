@@ -1,4 +1,6 @@
 // option-chain-server.js - OPTIMIZED FOR SPEED WITH AUTHENTICATION
+// Increase libuv thread pool — default 4 is too small for 60 concurrent gzip ops
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
@@ -1059,6 +1061,9 @@ function compressChainData(chainData) {
 // Cache for availableExpiries per instrument — refreshed every 5 minutes
 const _expiryCache = {};
 
+// Dirs we've already created this process lifetime — skip mkdirSync on repeat calls
+const _dirCreated = new Set();
+
 // Save option chain data (COMPRESSED)
 function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CONFIG.INSTRUMENT_KEY) {
   try {
@@ -1094,10 +1099,13 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
     const expiryDir = path.join(instrumentDir, expiryDate);
     const dateDir = path.join(expiryDir, istDateFolder);
 
-    ensureDirectoryExists(baseDataDir);
-    ensureDirectoryExists(instrumentDir);
-    ensureDirectoryExists(expiryDir);
-    ensureDirectoryExists(dateDir);
+    if (!_dirCreated.has(dateDir)) {
+      ensureDirectoryExists(baseDataDir);
+      ensureDirectoryExists(instrumentDir);
+      ensureDirectoryExists(expiryDir);
+      ensureDirectoryExists(dateDir);
+      _dirCreated.add(dateDir);
+    }
     
     const fileName = `${safeInstrumentName}_${expiryDate}_${currentIST.forFilename}.json.gz`;
     const filePath = path.join(dateDir, fileName);
@@ -1283,20 +1291,28 @@ async function updateAllInstruments() {
   }
 }
 
+// Cache listSavedFiles result for 30s — avoids repeated full-tree scans on rapid API calls
+let _listFilesCache = null;
+let _listFilesCacheAt = 0;
+const LIST_FILES_TTL = 30_000; // ms
+
 function listSavedFiles() {
   try {
+    const now = Date.now();
+    if (_listFilesCache && (now - _listFilesCacheAt) < LIST_FILES_TTL) return _listFilesCache;
+
     const dataDir = PATHS.MARKET;
     if (!fs.existsSync(dataDir)) return [];
-    
+
     const files = [];
-    
+
     function scanDirectory(dir, relativePath = '') {
       const items = fs.readdirSync(dir, { withFileTypes: true });
-      
+
       items.forEach(item => {
         const itemPath = path.join(dir, item.name);
         const relPath = path.join(relativePath, item.name);
-        
+
         if (item.isDirectory()) {
           scanDirectory(itemPath, relPath);
         } else if (item.isFile() && (item.name.endsWith('.json') || item.name.endsWith('.json.gz'))) {
@@ -1314,10 +1330,13 @@ function listSavedFiles() {
         }
       });
     }
-    
+
     scanDirectory(dataDir);
-    return files.sort((a, b) => b.modified - a.modified);
-    
+    files.sort((a, b) => b.modified - a.modified);
+    _listFilesCache = files;
+    _listFilesCacheAt = now;
+    return files;
+
   } catch (error) {
     return [];
   }
