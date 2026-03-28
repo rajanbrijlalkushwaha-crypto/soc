@@ -18,11 +18,13 @@ export default function Topbar() {
   };
 
   return (
-    <div className="topbar" id="mainTopbar">
+    <div className="topbar" id="mainTopbar" style={{ justifyContent: 'space-between', flexWrap: 'nowrap' }}>
       {state.historicalMode ? (
-        <HistoricalControls />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+          <HistoricalControls />
+        </div>
       ) : (
-        <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             SYMBOL: <SymbolSelect />
           </div>
@@ -39,10 +41,10 @@ export default function Topbar() {
             : <span>{state.currentTime}</span>}
           </div>
           <div>LOT: <span style={{ color: '#ff6f00', fontWeight: 700 }}>{state.lotSize}</span></div>
-        </>
+        </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginLeft: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
         <button
           onClick={() => dispatch({ type: 'TOGGLE_SPLIT_SCREEN' })}
           title="Cycle: Chain+Chart → Chart → Chain → Off"
