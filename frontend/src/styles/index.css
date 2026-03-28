@@ -316,7 +316,8 @@
             font-weight: 700;
             background: #fff;
             color: #222;
-            width: 120px;
+            width: 150px;
+            min-width: 150px;
             cursor: pointer;
             outline: none;
             box-sizing: border-box;
