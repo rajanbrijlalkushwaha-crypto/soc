@@ -74,24 +74,46 @@ function AppContent() {
     // default (/dashboard or /) stays as indexPageActive:true
   }, [dispatch]);
 
-  // Bootstrap — single call returns session + ui + notifications + indicators
+  // Bootstrap — load from localStorage instantly, then refresh from server
   useEffect(() => {
+    // 1. Show cached bootstrap immediately (zero network wait)
+    try {
+      const cached = localStorage.getItem('soc_bootstrap');
+      if (cached) {
+        const { user, settings, indicators } = JSON.parse(cached);
+        if (user)       dispatch({ type: 'SET_USER',        payload: user });
+        if (settings && Object.keys(settings).length > 0)
+                        dispatch({ type: 'SET_UI_SETTINGS', payload: settings });
+        if (indicators) dispatch({ type: 'SET_INDICATORS',  payload: indicators });
+      }
+    } catch (_) {}
+
+    // 2. Fetch fresh in background and update + re-cache
     Promise.all([
       fetch(`${API_BASE}/api/auth/bootstrap`, { credentials: 'include' }).then(r => r.json()).catch(() => null),
       fetch(`${API_BASE}/api/indicators`,     { credentials: 'include' }).then(r => r.json()).catch(() => null),
     ]).then(([boot, indData]) => {
-      if (indData?.success && indData.indicators)
+      const toCache = {};
+
+      if (indData?.success && indData.indicators) {
         dispatch({ type: 'SET_INDICATORS', payload: indData.indicators });
+        toCache.indicators = indData.indicators;
+      }
 
       if (boot?.authenticated && boot.user) {
         dispatch({ type: 'SET_USER', payload: boot.user });
-        if (boot.settings && Object.keys(boot.settings).length > 0)
+        toCache.user = boot.user;
+        if (boot.settings && Object.keys(boot.settings).length > 0) {
           dispatch({ type: 'SET_UI_SETTINGS', payload: boot.settings });
+          toCache.settings = boot.settings;
+        }
         if (boot.popup?.length > 0)
           dispatch({ type: 'SET_NOTIF_POPUP', payload: boot.popup });
         if (boot.unread > 0)
           dispatch({ type: 'SET_NOTIF_UNREAD', payload: boot.unread });
       }
+
+      try { localStorage.setItem('soc_bootstrap', JSON.stringify(toCache)); } catch (_) {}
     });
   }, [dispatch]);
 
@@ -144,19 +166,28 @@ function AppContent() {
   const wsFallbackRef = useRef(null);
   const wsDataReceivedRef = useRef(false);
 
-  // Push WS data into app state the moment it arrives
+  // Push WS data into app state the moment it arrives + cache it locally
   useEffect(() => {
     if (!wsData) return;
     wsDataReceivedRef.current = true;
     dispatch({ type: 'SET_LIVE_DATA', payload: wsData });
+    // Cache snapshot so next visit / symbol switch is instant
+    if (wsData.symbol) {
+      try { localStorage.setItem(`soc_live_${wsData.symbol}`, JSON.stringify(wsData)); } catch (_) {}
+    }
   }, [wsData, dispatch]);
 
-  // On symbol change: immediately fetch once from API so data shows instantly,
-  // then WS takes over. Also handles WS disconnected fallback (poll every 8s).
+  // On symbol change: show cached snapshot INSTANTLY (0ms), then WS/API takes over
   useEffect(() => {
     if (!state.currentSymbol || state.historicalMode) return;
     wsDataReceivedRef.current = false;
     clearInterval(wsFallbackRef.current);
+
+    // Show last known snapshot immediately — user sees data before network round-trip
+    try {
+      const cached = localStorage.getItem(`soc_live_${state.currentSymbol}`);
+      if (cached) dispatch({ type: 'SET_LIVE_DATA', payload: JSON.parse(cached) });
+    } catch (_) {}
 
     const loadOnce = async () => {
       if (wsDataReceivedRef.current) return; // WS was faster — skip
