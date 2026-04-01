@@ -31,6 +31,8 @@ const NotificationPanel  = lazy(() => import('./components/Notifications/Notific
 const AITrainPanel       = lazy(() => import('./components/AITrain/AITrainPanel'));
 const AIStockPanel       = lazy(() => import('./components/AIStock/AIStockPanel'));
 const JoinMeetPage       = lazy(() => import('./components/JoinMeet/JoinMeetPage'));
+const CryptoOptionChain    = lazy(() => import('./components/Crypto/CryptoOptionChain'));
+const CryptoOIChartModal   = lazy(() => import('./components/Crypto/CryptoOIChartModal'));
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -67,6 +69,8 @@ function AppContent() {
       dispatch({ type: 'SET_AI_STOCK', payload: true });
     } else if (path === '/join-meet') {
       dispatch({ type: 'SET_JOIN_MEET', payload: true });
+    } else if (path === '/crypto') {
+      dispatch({ type: 'SET_CRYPTO_PAGE', payload: true });
     } else if (path === '/optionchain') {
       dispatch({ type: 'SET_INDEX_PAGE', payload: false });
       dispatch({ type: 'SET_HISTORICAL_MODE', payload: false });
@@ -121,22 +125,17 @@ function AppContent() {
   useEffect(() => {
     const init = async () => {
       try {
-        // Show cached symbols immediately (zero-wait on return visits)
-        const cached = localStorage.getItem('soc_symbols');
-        if (cached) {
-          const cachedSymbols = JSON.parse(cached);
-          if (cachedSymbols.length > 0) {
-            dispatch({ type: 'SET_SYMBOLS', payload: cachedSymbols });
-            dispatch({ type: 'SET_CURRENT_SYMBOL', payload: cachedSymbols[0] });
-          }
-        }
-        // Then fetch fresh from server and update
-        const symbols = await fetchSymbols();
+        // Fetch live symbols (active instruments only) for live option chain
+        const symbols = await fetchSymbols('live');
         if (symbols.length > 0) {
           localStorage.setItem('soc_symbols', JSON.stringify(symbols));
           dispatch({ type: 'SET_SYMBOLS', payload: symbols });
           dispatch({ type: 'SET_CURRENT_SYMBOL', payload: symbols[0] });
         }
+        // Fetch all disk symbols for historical dropdown (includes deactivated instruments)
+        fetchSymbols('historical').then(all => {
+          if (all.length > 0) dispatch({ type: 'SET_AVAILABLE_SYMBOLS', payload: all });
+        }).catch(() => {});
       } catch (err) {
         console.error('Error loading symbols:', err);
         dispatch({ type: 'SET_ERROR', payload: err.message });
@@ -350,6 +349,7 @@ function AppContent() {
     else if (state.aiStockActive)  page = 'AI Stock';
     else if (state.aiPageActive && state.aiPageType === 'stock') page = 'Power AI Stock';
     else if (state.aiPageActive && state.aiPageType === 'swing') page = 'AI Swing Trade';
+    else if (state.cryptoPageActive) page = 'Crypto Options';
     else if (state.indexPageActive) page = 'Dashboard';
     else if (state.historicalMode) page = 'Historical';
     else page = 'Live Option Chain';
@@ -358,10 +358,20 @@ function AppContent() {
     state.holidayListActive, state.supportActive, state.profileActive,
     state.adminPanelActive, state.subscriptionActive, state.journalActive,
     state.teamPageActive, state.aiTrainActive, state.aiStockActive, state.aiPageActive,
-    state.aiPageType, state.indexPageActive, state.historicalMode,
+    state.aiPageType, state.indexPageActive, state.historicalMode, state.cryptoPageActive,
   ]);
 
   const renderMain = () => {
+    if (state.cryptoPageActive)  return (
+      <>
+        <div className="watermark">SOC.AI.IN</div>
+        <CryptoOIChartModal />
+        <CryptoOptionChain />
+        <UISettings />
+        <Footer />
+        <SOCAIPanel />
+      </>
+    );
     if (state.joinMeetActive)    return <JoinMeetPage />;
     if (state.holidayListActive) return <HolidayListPanel />;
     if (state.supportActive)     return <SupportPanel />;

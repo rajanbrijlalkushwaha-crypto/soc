@@ -49,13 +49,14 @@ const PATHS = {
   UPSTOX_APPS:      path.join(DATA_ROOT, 'config', 'upstox_apps.json'),
   INDICATOR_ACCESS: path.join(DATA_ROOT, 'config', 'indicator_access.json'),
   INSTRUMENTS_CFG:  path.join(DATA_ROOT, 'config', 'instruments.json'),
+  CRYPTO_MARKET:    path.join(DATA_ROOT, 'crypto'),
 };
 
 // ── Auto-create all directories on first require ──────────────────────────────
 const fs = require('fs');
 const dirsToEnsure = [
   PATHS.MARKET, PATHS.USERS, PATHS.PENDING, PATHS.TEAM,
-  PATHS.SESSIONS, PATHS.LOGS, PATHS.CONFIG,
+  PATHS.SESSIONS, PATHS.LOGS, PATHS.CONFIG, PATHS.CRYPTO_MARKET,
 ];
 for (const dir of dirsToEnsure) {
   if (!fs.existsSync(dir)) {

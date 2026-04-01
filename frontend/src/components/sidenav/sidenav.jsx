@@ -25,6 +25,7 @@ export default function SideNav() {
     { type: 'SET_AI_STOCK',        payload: false },
     { type: 'SET_JOIN_MEET',       payload: false },
     { type: 'SET_TEAM_PAGE',       payload: false },
+    { type: 'SET_CRYPTO_PAGE',     payload: false },
   ];
 
   const goDashboard  = () => navigate('/dashboard',    [...RESET, { type: 'SET_INDEX_PAGE',      payload: true  }]);
@@ -40,14 +41,16 @@ export default function SideNav() {
   const goAIStock    = () => navigate('/ai-stock',     [...RESET, { type: 'SET_AI_STOCK',        payload: true  }]);
   const goJoinMeet   = () => navigate('/join-meet',    [...RESET, { type: 'SET_JOIN_MEET',       payload: true  }]);
   const goTeam       = () => navigate('/team',         [...RESET, { type: 'SET_TEAM_PAGE',       payload: true  }]);
+  const goCrypto     = () => navigate('/crypto',        [...RESET, { type: 'SET_CRYPTO_PAGE',     payload: true  }]);
 
   const openNotif = () => dispatch({ type: 'SET_NOTIF_PANEL', payload: true });
 
   // ── Active state ─────────────────────────────────────────
   const isAITrain      = state.aiTrainActive;
   const isAIStock      = state.aiStockActive;
+  const isCrypto       = state.cryptoPageActive;
   const isDashboard    = state.indexPageActive && !state.holidayListActive && !state.supportActive && !state.profileActive && !state.adminPanelActive && !state.subscriptionActive && !state.journalActive && !state.teamPageActive && !state.aiTrainActive;
-  const isLive         = !state.indexPageActive && !state.historicalMode && !state.aiPageActive && !state.holidayListActive && !state.supportActive && !state.profileActive && !state.adminPanelActive && !state.subscriptionActive && !state.journalActive && !state.teamPageActive && !state.aiTrainActive;
+  const isLive         = !state.indexPageActive && !state.historicalMode && !state.aiPageActive && !state.holidayListActive && !state.supportActive && !state.profileActive && !state.adminPanelActive && !state.subscriptionActive && !state.journalActive && !state.teamPageActive && !state.aiTrainActive && !state.cryptoPageActive;
   const isHistorical   = state.historicalMode && !state.holidayListActive && !state.supportActive && !state.profileActive && !state.adminPanelActive;
   const isPowerAI      = state.aiPageActive && state.aiPageType === 'stock';
   const isHolidayList  = state.holidayListActive;
@@ -73,6 +76,9 @@ export default function SideNav() {
       { icon: '🏠', label: 'Dashboard',         tooltip: 'Dashboard',         active: isDashboard,  onClick: goDashboard  },
       { icon: '📊', label: 'Live Option Chain',  tooltip: 'Live Option Chain',  active: isLive,       onClick: goLive       },
       { icon: '📅', label: 'Historical Data',    tooltip: 'Historical Data',   active: isHistorical, onClick: goHistorical },
+    ]},
+    { section: 'Crypto', items: [
+      { icon: '🪙', label: 'Crypto Options', tooltip: 'Crypto Option Chain', active: isCrypto, onClick: goCrypto },
     ]},
     { section: 'AI Tools', items: [
       { icon: '⚡', label: 'Power AI Stock', tooltip: 'Power AI Stock', active: isPowerAI, onClick: goPowerAI },

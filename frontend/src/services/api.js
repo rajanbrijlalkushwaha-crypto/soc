@@ -18,8 +18,8 @@ export const fetchLiveData = (symbol) =>
 export const fetchLiveSignals = (symbol) =>
   api.get(`/api/signals/live/${symbol}`).then(r => r.data);
 
-export const fetchSymbols = () =>
-  api.get('/api/symbols').then(r => r.data);
+export const fetchSymbols = (mode = 'live') =>
+  api.get(`/api/symbols?mode=${mode}`).then(r => r.data);
 
 // ─── HISTORICAL DATA ───
 export const fetchHistoricalSymbols = () =>

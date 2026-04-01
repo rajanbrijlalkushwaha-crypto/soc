@@ -158,30 +158,41 @@ module.exports = function(app){
 
   // ============ FRONTEND API ENDPOINTS ============
 
-  // Get all symbols (for both live and historical)
+  // Get symbols
+  // ?mode=live      → only active instruments (from admin panel config)
+  // ?mode=historical (or no param) → all folders on disk
 app.get("/api/symbols", (req, res) => {
   try {
     const dataPath = PATHS.MARKET;
-
+    const mode = req.query.mode || 'historical';
 
     // If Data folder does not exist, return empty array (JSON safe)
     if (!fs.existsSync(dataPath)) {
       return res.json([]);
     }
 
-    // Read only folders (symbols)
+    if (mode === 'live') {
+      // liveCache keys = exactly the symbols currently being fetched (active instruments)
+      // These are already correct folder names set by saveOptionChainData()
+      const liveSymbols = [...liveCache.entries()].map(([k]) => k.toUpperCase());
+      if (liveSymbols.length > 0) return res.json(liveSymbols);
+
+      // liveCache empty (server just started, fetching not begun yet)
+      // Fall back: disk folders — better than empty list
+      const all = fs.readdirSync(dataPath, { withFileTypes: true })
+        .filter(d => d.isDirectory()).map(d => d.name.toUpperCase());
+      return res.json(all);
+    }
+
+    // Historical: all disk folders
     const symbols = fs.readdirSync(dataPath, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => d.name.toUpperCase());
 
-
-    // ALWAYS return JSON array
     res.setHeader("Content-Type", "application/json");
     res.status(200).json(symbols);
 
   } catch (err) {
-
-    // Even on error → return valid JSON (frontend will never break)
     res.status(200).json([]);
   }
 });

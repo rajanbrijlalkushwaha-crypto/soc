@@ -71,6 +71,7 @@ const initialState = {
   chartModalOpen: false,
   oiChartModalOpen: false,
   strikeDataChartModalOpen: false,
+  cryptoOiChartModal: null,
 
   // Index / Dashboard page
   indexPageActive: true,
@@ -90,6 +91,7 @@ const initialState = {
   aiTrainActive: false,
   aiStockActive: false,
   joinMeetActive: false,
+  cryptoPageActive: false,
 
   // Notifications
   notifPanelOpen: false,
@@ -130,6 +132,8 @@ function appReducer(state, action) {
   switch (action.type) {
     case 'SET_SYMBOLS':
       return { ...state, symbols: action.payload, availableSymbols: action.payload };
+    case 'SET_AVAILABLE_SYMBOLS':
+      return { ...state, availableSymbols: action.payload };
     case 'SET_CURRENT_SYMBOL':
       return { ...state, currentSymbol: action.payload, signalsLoading: true,
         mctrSupport: null, mctrResistance: null,
@@ -197,10 +201,12 @@ function appReducer(state, action) {
       return { ...state, chartModalOpen: action.payload };
     case 'SET_OI_CHART_MODAL':
       return { ...state, oiChartModalOpen: action.payload };
+    case 'SET_CRYPTO_OI_CHART_MODAL':
+      return { ...state, cryptoOiChartModal: action.payload };
     case 'SET_STRIKE_DATA_CHART_MODAL':
       return { ...state, strikeDataChartModalOpen: action.payload };
     case 'SET_INDEX_PAGE':
-      return { ...state, indexPageActive: action.payload, aiTrainActive: false, aiStockActive: false, holidayListActive: false, supportActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, journalActive: false, teamPageActive: false };
+      return { ...state, indexPageActive: action.payload, cryptoPageActive: false, aiTrainActive: false, aiStockActive: false, holidayListActive: false, supportActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, journalActive: false, teamPageActive: false };
     case 'SET_AI_PAGE':
       return { ...state, aiPageActive: action.payload.active, aiPageType: action.payload.type || null, aiTrainActive: false, aiStockActive: false, holidayListActive: false, supportActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, journalActive: false, teamPageActive: false };
     case 'SET_HOLIDAY_LIST':
@@ -241,8 +247,12 @@ function appReducer(state, action) {
         : { ...state, aiStockActive: false };
     case 'SET_JOIN_MEET':
       return action.payload
-        ? { ...state, joinMeetActive: true, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        ? { ...state, joinMeetActive: true, cryptoPageActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
         : { ...state, joinMeetActive: false };
+    case 'SET_CRYPTO_PAGE':
+      return action.payload
+        ? { ...state, cryptoPageActive: true, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        : { ...state, cryptoPageActive: false };
     case 'SET_NOTIF_PANEL':
       return { ...state, notifPanelOpen: action.payload };
     case 'SET_NOTIF_UNREAD':

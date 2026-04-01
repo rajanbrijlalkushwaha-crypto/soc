@@ -750,6 +750,111 @@ function ScheduleTab({ adminToken }) {
   );
 }
 
+// ── Crypto Tab (admin only) ──────────────────────────────────────────────────
+function CryptoTab({ adminToken }) {
+  const [status, setStatus]   = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg]         = useState('');
+  const intervalRef           = useRef(null);
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const d = await API('/api/crypto/status');
+      setStatus(d);
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    fetchStatus();
+    intervalRef.current = setInterval(fetchStatus, 5000);
+    return () => clearInterval(intervalRef.current);
+  }, [fetchStatus]);
+
+  const action = async (type) => {
+    setLoading(true);
+    setMsg('');
+    try {
+      const d = await ADMIN_API(`/api/crypto/${type}`, adminToken, { method: 'POST' });
+      setMsg(d.message || (d.success ? 'Done' : 'Failed'));
+      fetchStatus();
+    } catch (e) {
+      setMsg('Request failed');
+    } finally {
+      setLoading(false);
+      setTimeout(() => setMsg(''), 4000);
+    }
+  };
+
+  const isRunning   = status?.running;
+  const isConnected = status?.connected;
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">🪙 Crypto Feed</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="admp-btn admp-btn-primary" onClick={fetchStatus}>Refresh</button>
+        </div>
+      </div>
+
+      {/* Status card */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+        {[
+          { label: 'Feed',      value: isRunning   ? 'Running'   : 'Stopped',    color: isRunning   ? '#2e7d32' : '#b71c1c' },
+          { label: 'WebSocket', value: isConnected ? 'Connected' : 'Disconnected', color: isConnected ? '#2e7d32' : '#f57f17' },
+          { label: 'Products',  value: status?.products ?? '—',  color: '#1565c0' },
+          { label: 'Tickers',   value: status?.tickerCount ?? '—', color: '#1565c0' },
+        ].map(({ label, value, color }) => (
+          <div key={label} style={{ background: '#f5f5f5', borderRadius: 8, padding: '12px 20px', minWidth: 110, textAlign: 'center', border: '1px solid #e0e0e0' }}>
+            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>{label}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Expiries */}
+      {status?.expiries && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>Active Expiries (2 nearest per symbol)</div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {Object.entries(status.expiries).map(([sym, exps]) => (
+              <div key={sym} style={{ background: '#e3f2fd', borderRadius: 8, padding: '8px 14px', fontSize: 13 }}>
+                <span style={{ fontWeight: 700, marginRight: 8 }}>{sym}</span>
+                {(exps || []).join(' · ') || '—'}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <button
+          className="admp-btn admp-btn-primary"
+          onClick={() => action('start')}
+          disabled={loading || isRunning}
+          style={{ background: '#2e7d32', minWidth: 100 }}
+        >
+          ▶ Start
+        </button>
+        <button
+          className="admp-btn"
+          onClick={() => action('stop')}
+          disabled={loading || !isRunning}
+          style={{ background: '#b71c1c', color: '#fff', minWidth: 100 }}
+        >
+          ⏹ Stop
+        </button>
+        {msg && <span className="admp-msg" style={{ margin: 0 }}>{msg}</span>}
+      </div>
+
+      <div style={{ marginTop: 18, fontSize: 12, color: '#888' }}>
+        Data saved every 10s → <code>data/crypto/&#123;BTC|ETH|SOL&#125;/&#123;expiry&#125;/&#123;date&#125;/</code>
+      </div>
+    </div>
+  );
+}
+
 // ── Logs Tab (admin only) ────────────────────────────────────────────────────
 function LogsTab({ adminToken }) {
   const [logs, setLogs]           = useState([]);
@@ -1268,7 +1373,7 @@ function IndicatorsTab() {
 }
 
 // ── Main AdminPanel ──────────────────────────────────────────────────────────
-const TABS_ADMIN  = ['Users', 'Team', 'Notifications', 'Indicators', 'AI Train', 'Meet', 'System', 'Schedule', 'Logs'];
+const TABS_ADMIN  = ['Users', 'Team', 'Notifications', 'Indicators', 'AI Train', 'Meet', 'Crypto', 'System', 'Schedule', 'Logs'];
 
 // ── Meet Tab ─────────────────────────────────────────────────────────────────
 function MeetTab() {
@@ -1373,7 +1478,7 @@ export default function AdminPanel() {
   };
 
   // For admin tabs that need system token, show a login prompt if token missing
-  const needsToken = isAdmin && ['System', 'Schedule', 'Logs'].includes(activeTab);
+  const needsToken = isAdmin && ['Crypto', 'System', 'Schedule', 'Logs'].includes(activeTab);
   const isAdminOrMember = isAdmin || userRole === 'member';
 
 
@@ -1413,6 +1518,7 @@ export default function AdminPanel() {
             {tab === 'Indicators' && '🎛️ '}
             {tab === 'AI Train' && '🧠 '}
             {tab === 'Meet' && '📹 '}
+            {tab === 'Crypto' && '🪙 '}
             {tab === 'System' && '🖥️ '}
             {tab === 'Schedule' && '🕐 '}
             {tab === 'Logs' && '📋 '}
@@ -1450,6 +1556,7 @@ export default function AdminPanel() {
           </div>
         )}
 
+        {isAdmin && activeTab === 'Crypto'   && adminToken && <CryptoTab   adminToken={adminToken} />}
         {isAdmin && activeTab === 'System'   && adminToken && <SystemTab   adminToken={adminToken} />}
         {isAdmin && activeTab === 'Schedule' && adminToken && <ScheduleTab adminToken={adminToken} />}
         {isAdmin && activeTab === 'Logs'     && adminToken && <LogsTab     adminToken={adminToken} />}

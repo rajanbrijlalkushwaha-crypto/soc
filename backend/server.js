@@ -1263,7 +1263,7 @@ async function updateOptionChain(instrumentKey = CONFIG.INSTRUMENT_KEY) {
 // Processes in batches of CONCURRENCY to avoid flooding the event loop.
 // Between batches we yield (setImmediate) so login / WS / API requests
 // can be handled without waiting for the entire cycle to finish.
-const FETCH_CONCURRENCY = 10; // max simultaneous Upstox API calls
+const FETCH_CONCURRENCY = 100; // fetch all instruments at once
 
 async function updateAllInstruments() {
   if (serverState.isUpdating) return [];
@@ -1408,26 +1408,29 @@ async function warmExpiryCache(force = false) {
   log(`📅 Expiry cache ready — data fetch starting.`);
 }
 
-// AUTO REFRESH - GUARANTEED 5 SECONDS - ALL INSTRUMENTS
+// AUTO REFRESH - NO OVERLAP - ALL INSTRUMENTS PARALLEL
 function startAutoRefresh() {
   if (serverState.autoRefreshInterval) {
     return;
   }
-  
+
   const instruments = CONFIG.INSTRUMENTS || [CONFIG.INSTRUMENT_KEY];
   log(`🔁 Auto-refresh started: Every ${CONFIG.REFRESH_INTERVAL / 1000}s for ${instruments.length} instruments`);
 
-  // Cache already warmed by caller (startServer/warmExpiryCache) — start interval immediately
-  updateAllInstruments();
-  serverState.autoRefreshInterval = setInterval(() => {
-    updateAllInstruments();
-  }, CONFIG.REFRESH_INTERVAL);
+  async function runCycle() {
+    await updateAllInstruments();
+    if (serverState.autoRefreshInterval !== null) {
+      serverState.autoRefreshInterval = setTimeout(runCycle, CONFIG.REFRESH_INTERVAL);
+    }
+  }
+  // Start immediately, next cycle only after current one finishes
+  serverState.autoRefreshInterval = setTimeout(runCycle, 0);
 }
 
 function startFetching(isScheduled = false) {
   // If already running, stop first then restart fresh
   if (serverState.autoRefreshInterval) {
-    clearInterval(serverState.autoRefreshInterval);
+    clearTimeout(serverState.autoRefreshInterval);
     serverState.autoRefreshInterval = null;
     log('🔄 Restarting data fetching...');
   }
@@ -1441,13 +1444,16 @@ function startFetching(isScheduled = false) {
   const instruments = CONFIG.INSTRUMENTS || [CONFIG.INSTRUMENT_KEY];
   log(`▶️ Starting data fetching for ${instruments.length} instruments (${isScheduled ? 'SCHEDULED' : 'MANUAL'})`);
 
-  // Warm expiry cache first, then start interval
+  // Warm expiry cache first, then start — no overlap between cycles
   warmExpiryCache()
     .then(() => {
-      updateAllInstruments();
-      serverState.autoRefreshInterval = setInterval(() => {
-        updateAllInstruments();
-      }, CONFIG.REFRESH_INTERVAL);
+      async function runCycle() {
+        await updateAllInstruments();
+        if (serverState.autoRefreshInterval !== null) {
+          serverState.autoRefreshInterval = setTimeout(runCycle, CONFIG.REFRESH_INTERVAL);
+        }
+      }
+      serverState.autoRefreshInterval = setTimeout(runCycle, 0);
       log(`✅ Fetching active — every ${CONFIG.REFRESH_INTERVAL / 1000}s`);
     })
     .catch(e => {
@@ -1465,7 +1471,7 @@ function stopFetching() {
   }
   
   log("⏹️ Stopping data fetching");
-  clearInterval(serverState.autoRefreshInterval);
+  clearTimeout(serverState.autoRefreshInterval);
   serverState.autoRefreshInterval = null;
   serverState.isManualRunning = false;
   serverState.isScheduledRunning = false;
@@ -3041,6 +3047,78 @@ async function startServer() {
     // Pre-warm ALL symbols from disk into Redis + liveCache before any user connects.
     // New live data from Upstox overwrites Redis key (TTL resets), old data is gone.
     warmAllSymbolsFromDisk().catch(e => console.error('[WS] Warm-up error:', e));
+
+    // ── Crypto feed (Delta Exchange WebSocket) ────────────────────────────────
+    const cryptoFeed = require('./crypto/cryptoFeed');
+    cryptoFeed.start();
+    app.get('/api/crypto/status',   (_req, res) => res.json(cryptoFeed.getStatus()));
+    app.get('/api/crypto/symbols',  (_req, res) => res.json(cryptoFeed.getAvailable()));
+    app.get('/api/crypto/live/:underlying/:expiry', (req, res) => {
+      const { underlying, expiry } = req.params;
+      const snap = cryptoFeed.getSnapshot(underlying.toUpperCase(), expiry);
+      if (!snap) return res.status(404).json({ error: 'No data yet' });
+      res.json(snap);
+    });
+    app.post('/api/crypto/start', authenticateAdmin, (_req, res) => { cryptoFeed.start(); res.json({ success: true, message: 'Crypto feed started' }); });
+    app.post('/api/crypto/stop',  authenticateAdmin, (_req, res) => { cryptoFeed.stop();  res.json({ success: true, message: 'Crypto feed stopped' }); });
+
+    // OI chart data — reads all .json.gz files for a date and builds vol/oi/oichng % time series
+    app.get('/api/crypto/chart/oi/:underlying/:expiry/:date', (req, res) => {
+      try {
+        const { underlying, expiry, date } = req.params;
+        const datePath = path.join(PATHS.CRYPTO_MARKET, underlying.toUpperCase(), expiry, date);
+        if (!fs.existsSync(datePath)) return res.status(404).json({ error: 'No data for this date' });
+
+        const files = fs.readdirSync(datePath)
+          .filter(f => f.endsWith('.json.gz'))
+          .sort();
+        if (!files.length) return res.status(404).json({ error: 'No snapshot files found' });
+
+        const chartData = { symbol: underlying.toUpperCase(), expiry, date, strikes: {} };
+
+        for (const file of files) {
+          try {
+            const buf = fs.readFileSync(path.join(datePath, file));
+            const raw = JSON.parse(zlib.gunzipSync(buf).toString());
+            const chain = raw.chain || [];
+            const time  = (raw.m?.time || '').substring(0, 5); // "HH:MM"
+            if (!time || !chain.length) continue;
+
+            // compute per-snapshot maxes for normalisation
+            let maxCOI=1, maxPOI=1, maxCVol=1, maxPVol=1, maxCChg=1, maxPChg=1;
+            chain.forEach(r => {
+              if ((r.call?.oi     || 0) > maxCOI)  maxCOI  = r.call.oi;
+              if ((r.put?.oi      || 0) > maxPOI)  maxPOI  = r.put.oi;
+              if ((r.call?.volume || 0) > maxCVol) maxCVol = r.call.volume;
+              if ((r.put?.volume  || 0) > maxPVol) maxPVol = r.put.volume;
+              if (Math.abs(r.call?.oi_change || 0) > maxCChg) maxCChg = Math.abs(r.call.oi_change);
+              if (Math.abs(r.put?.oi_change  || 0) > maxPChg) maxPChg = Math.abs(r.put.oi_change);
+            });
+
+            chain.forEach(r => {
+              const strike = r.strike;
+              if (!chartData.strikes[strike]) chartData.strikes[strike] = { call: [], put: [] };
+              chartData.strikes[strike].call.push({
+                time,
+                vol_pct:    ((r.call?.volume || 0) / maxCVol * 100).toFixed(1),
+                oi_pct:     ((r.call?.oi     || 0) / maxCOI  * 100).toFixed(1),
+                oichng_pct: (Math.abs(r.call?.oi_change || 0) / maxCChg * 100).toFixed(1),
+              });
+              chartData.strikes[strike].put.push({
+                time,
+                vol_pct:    ((r.put?.volume || 0) / maxPVol * 100).toFixed(1),
+                oi_pct:     ((r.put?.oi     || 0) / maxPOI  * 100).toFixed(1),
+                oichng_pct: (Math.abs(r.put?.oi_change || 0) / maxPChg * 100).toFixed(1),
+              });
+            });
+          } catch (_) {}
+        }
+
+        res.json(chartData);
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
 
     // Serve built React frontend (catch-all u2014 must come after API routes)
     const frontendBuild = path.join(PATHS.FRONTEND, 'build');
