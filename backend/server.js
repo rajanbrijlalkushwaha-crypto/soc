@@ -1206,8 +1206,8 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
       // Chart generation throttled to once per 60s per instrument — writeFileSync calls
       // inside generateAllChartData are synchronous and block the event loop.
       // Running them every 10s for 22 instruments causes site slowness.
+      if (!global._lastChartGen) global._lastChartGen = {};
       const _chartNow = Date.now();
-      if (!_lastChartGen) global._lastChartGen = {};
       if (!global._lastChartGen[safeInstrumentName] || (_chartNow - global._lastChartGen[safeInstrumentName]) >= 60000) {
         global._lastChartGen[safeInstrumentName] = _chartNow;
         try {
