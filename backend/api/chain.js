@@ -2882,12 +2882,15 @@ function backfillVolOiCng() {
   const dataDir = PATHS.MARKET;
   if (!fs.existsSync(dataDir)) return;
 
-  // Collect all folders first, then process one-per-tick so the event loop stays free
+  // Only process today's folder — historical voloichng files don't change after market close.
+  // Regenerating all historical folders on every restart was causing sustained high CPU.
+  const today = new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
   const queue = [];
   folders(dataDir).forEach(sym => {
     const symPath = path.join(dataDir, sym);
     folders(symPath).forEach(exp => {
       folders(path.join(symPath, exp)).forEach(dt => {
+        if (dt !== today) return; // skip historical — already generated
         const datePath = path.join(symPath, exp, dt);
         if (getDataFiles(datePath).length > 0) queue.push({ sym, exp, dt, datePath });
       });
@@ -2918,23 +2921,34 @@ function backfillVolOiCng() {
   setImmediate(next);
 }
 
-// ── Live 5-minute regen — reads ALL date folders from saved .gz files ──────────
-// Every 5 minutes, re-reads saved .gz files in every date folder and rewrites
-// voloichng.json. After 3:30 PM no new files are saved, so data stays at last value.
+// ── Live 30-minute regen — only today's folders, queue-based with event loop yield ─
+// Historical folders don't change — no need to regen them every cycle.
+// Uses the same setImmediate queue pattern as backfill to avoid blocking the event loop.
 function _startVolOiLiveRegen() {
-  setInterval(() => {
+  function runRegen() {
     try {
+      const today   = new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
       const dataDir = PATHS.MARKET;
+      const queue   = [];
       folders(dataDir).forEach(sym => {
         const symPath = path.join(dataDir, sym);
         folders(symPath).forEach(exp => {
           folders(path.join(symPath, exp)).forEach(dt => {
-            regenVolOiForFolder(path.join(symPath, exp, dt), dt);
+            if (dt === today) queue.push({ datePath: path.join(symPath, exp, dt), dt });
           });
         });
       });
+      let i = 0;
+      function next() {
+        if (i >= queue.length) return;
+        const { datePath, dt } = queue[i++];
+        try { regenVolOiForFolder(datePath, dt); } catch (_) {}
+        setImmediate(next);
+      }
+      setImmediate(next);
     } catch (_) {}
-  }, 5 * 60 * 1000);
+  }
+  setInterval(runRegen, 30 * 60 * 1000);
 }
 
 // ── API endpoint ──────────────────────────────────────────────────────────────
