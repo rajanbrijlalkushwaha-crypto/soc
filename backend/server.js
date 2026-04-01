@@ -322,7 +322,7 @@ const CONFIG = {
   
   // Server settings
   PORT: 3000,
-  REFRESH_INTERVAL: 5000, // 5 seconds
+  REFRESH_INTERVAL: 10000, // 10 seconds
   LOG_FILE: "server.log",
   
   // API endpoints
@@ -1263,7 +1263,7 @@ async function updateOptionChain(instrumentKey = CONFIG.INSTRUMENT_KEY) {
 // Processes in batches of CONCURRENCY to avoid flooding the event loop.
 // Between batches we yield (setImmediate) so login / WS / API requests
 // can be handled without waiting for the entire cycle to finish.
-const FETCH_CONCURRENCY = 100; // fetch all instruments at once
+const FETCH_CONCURRENCY = 5; // process 5 instruments at a time — avoids flooding event loop
 
 async function updateAllInstruments() {
   if (serverState.isUpdating) return [];
