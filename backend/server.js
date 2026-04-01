@@ -1203,10 +1203,17 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
           })
           .catch(writeErr => log(`❌ Disk write failed for ${safeInstrumentName}: ${writeErr.message}`));
       });
-      // Chart generation also deferred — background, not user-facing
-      try {
-        if (generateAllChartData) generateAllChartData(safeInstrumentName, expiryDate, istDateFolder);
-      } catch (_) {}
+      // Chart generation throttled to once per 60s per instrument — writeFileSync calls
+      // inside generateAllChartData are synchronous and block the event loop.
+      // Running them every 10s for 22 instruments causes site slowness.
+      const _chartNow = Date.now();
+      if (!_lastChartGen) global._lastChartGen = {};
+      if (!global._lastChartGen[safeInstrumentName] || (_chartNow - global._lastChartGen[safeInstrumentName]) >= 60000) {
+        global._lastChartGen[safeInstrumentName] = _chartNow;
+        try {
+          if (generateAllChartData) generateAllChartData(safeInstrumentName, expiryDate, istDateFolder);
+        } catch (_) {}
+      }
     });
 
     return { saved_path: filePath, size_kb: '~', time_hhmmss: currentIST.time };
