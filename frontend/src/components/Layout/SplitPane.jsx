@@ -42,20 +42,19 @@ export default function SplitPane({ left, right, defaultSplit = 55 }) {
       {/* Drag handle */}
       <div
         onMouseDown={onMouseDown}
-        onMouseEnter={e => { e.currentTarget.querySelectorAll('span').forEach(s => s.style.background = '#1976d2'); }}
-        onMouseLeave={e => { e.currentTarget.querySelectorAll('span').forEach(s => s.style.background = '#bbb'); }}
+        onMouseEnter={e => { e.currentTarget.style.background = '#1565c0'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = '#1976d2'; }}
         title="Drag to resize"
         style={{
           width: '8px', flexShrink: 0, cursor: 'col-resize',
-          background: 'transparent',
-          borderLeft: '1px solid #ddd', borderRight: '1px solid #ddd',
+          background: '#1976d2',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexDirection: 'column', gap: '3px',
+          flexDirection: 'column', gap: '4px',
           userSelect: 'none',
         }}
       >
-        {[0,1,2].map(i => (
-          <span key={i} style={{ width: '3px', height: '3px', borderRadius: '50%', background: '#bbb', display: 'block' }} />
+        {[0,1,2,3,4].map(i => (
+          <span key={i} style={{ width: '3px', height: '3px', borderRadius: '50%', background: 'rgba(255,255,255,0.5)', display: 'block' }} />
         ))}
       </div>
 

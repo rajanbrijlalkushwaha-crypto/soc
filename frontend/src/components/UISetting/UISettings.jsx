@@ -8,6 +8,7 @@ const TOGGLES = [
   { label: 'LTP Display',   stateKey: 'ltpDisplayActive',  action: 'TOGGLE_LTP_DISPLAY' },
   { label: 'Volume',        stateKey: 'volumeDisplayActive', action: 'TOGGLE_VOLUME' },
   { label: 'OI Display',    stateKey: 'oiDisplayActive',   action: 'TOGGLE_OI' },
+  { label: 'Vol/OI Chng',  stateKey: 'volOiCngActive',    action: 'TOGGLE_VOLOICHNG_DISPLAY' },
   { label: 'MMI Display',   stateKey: 'mmiDisplayActive',  action: 'TOGGLE_MMI' },
   { label: 'Reverse Table', stateKey: 'tableReversed',     action: 'TOGGLE_REVERSE' },
   { label: 'LTP Calculator',stateKey: 'ltpCalcActive',     action: 'TOGGLE_LTP_CALC' },

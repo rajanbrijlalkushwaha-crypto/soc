@@ -21,4 +21,5 @@ data/config/
 
 # Mac file
 .DS_Store
-*.zip
+*.zipdata/.env
+data/crypto/

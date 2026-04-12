@@ -45,19 +45,20 @@ export default function Topbar() {
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-        <button
-          onClick={() => dispatch({ type: 'TOGGLE_SPLIT_SCREEN' })}
-          title="Cycle: Chain+Chart → Chart → Chain → Off"
+        <select
+          value={state.splitScreenActive ? state.splitScreenMode : 'chain'}
+          onChange={e => dispatch({ type: 'SET_SPLIT_MODE', payload: e.target.value })}
           style={{
-            padding: '5px 12px', cursor: 'pointer',
-            background: state.splitScreenActive ? '#1976d2' : 'rgba(25,118,210,0.12)',
-            color: state.splitScreenActive ? '#fff' : '#1976d2',
+            padding: '5px 8px', cursor: 'pointer',
+            background: '#1976d2', color: '#fff',
             border: '1.5px solid #1976d2', borderRadius: '6px',
-            fontSize: '13px', fontWeight: 700,
+            fontSize: '13px', fontWeight: 700, outline: 'none',
           }}
         >
-          {state.splitScreenMode === 'chart' ? '📈 Chart' : '⊞ Chain+Chart'}
-        </button>
+          <option value="chain">Chain</option>
+          <option value="split">Chain+Chart</option>
+          <option value="chart">Chart</option>
+        </select>
         {state.user && (
           <span style={{ fontSize: '13px', fontWeight: 600, color: '#ff6f00' }}>
             Welcome! <span style={{ color: '#ff6f00' }}>{state.user?.name || '--'}</span>

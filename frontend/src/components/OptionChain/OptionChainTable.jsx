@@ -1,17 +1,31 @@
-import React, { useMemo, useEffect, useRef } from 'react';
+import React, { useMemo, useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   fix, formatReversal, calculateSupport, calculateResistance,
   calculatePCR, calculateMMI, calculateMTMB, calculateTheory40,
   calculateVT, getRankClass, getColumnStats,
 } from '../../services/calculations';
+import PCRChartModal from '../Chart/PCRChartModal';
 
 export default function OptionChainTable() {
   const { state, dispatch } = useApp();
+  const [pcrModalOpen, setPcrModalOpen] = useState(false);
+
+  // S Level single/double click state — kept local to avoid AppContext churn
+  const [selectedSLevel, setSelectedSLevel]   = useState(null); // { strike, type } for highlight
+  const committedSourceRef                     = useRef(null);   // confirmed source data
+  const singleClickTimerRef                   = useRef(null);   // distinguishes click vs dblclick
+
+  // Clear highlight whenever popup closes
+  useEffect(() => {
+    if (!state.ltpPopupOpen) setSelectedSLevel(null);
+  }, [state.ltpPopupOpen]);
+
   const {
     chainData, currentSpot, currentSymbol, greeksActive, atmActive,
     indicatorsActive, ltpDisplayActive, volumeDisplayActive,
-    oiDisplayActive, mmiDisplayActive, tableReversed,
+    oiDisplayActive, mmiDisplayActive, tableReversed, volOiCngActive,
+    spotChange, spotPctChange, futuresLtp, futuresChange, futuresPctChange,
     strategy40SupportReversal, strategy40ResistanceReversal,
     strategy40GapCutSupport, strategy40GapCutResistance,
     nextDayBromosR, nextDayBromosS,
@@ -27,7 +41,7 @@ export default function OptionChainTable() {
   // showInLakh=false (default): full number; showInLakh=true: compact K/L
   const fmtLots = (v) => {
     const lots = Math.round((v || 0) / (lotSize || 1));
-    if (!showInLakh) return lots.toLocaleString('en-IN');
+    if (!showInLakh) return String(lots);
     if (lots >= 100000) return (lots / 100000).toFixed(1) + 'L';
     if (lots >= 1000)   return (lots / 1000).toFixed(1) + 'K';
     return String(lots);
@@ -81,6 +95,38 @@ export default function OptionChainTable() {
     return Math.abs(displayChain[1].strike - displayChain[0].strike);
   }, [displayChain]);
 
+  // OI-dominant strike highlights:
+  // 1. supportOIStrike:    going DOWN from spot, first strike where PUT OI > CALL OI → green on put S Level
+  // 2. resistanceOIStrike: going UP from just above supportOIStrike, first strike where CALL OI > PUT OI → red on call S Level
+  const { resistanceOIStrike, supportOIStrike } = useMemo(() => {
+    if (!currentSpot || !displayChain.length) return { resistanceOIStrike: null, supportOIStrike: null };
+    const sorted = [...displayChain].sort((a, b) => a.strike - b.strike);
+
+    // Step 1: go DOWN starting from ONE STRIKE ABOVE spot, find first where put OI > call OI
+    let supportOIStrike = null;
+    const firstAbove = sorted.find(r => r.strike > currentSpot);
+    const startFrom  = firstAbove ? firstAbove.strike : currentSpot;
+    for (const r of [...sorted].reverse()) {
+      if (r.strike > startFrom) continue;
+      if ((r.put?.oi || 0) > (r.call?.oi || 0)) { supportOIStrike = r.strike; break; }
+    }
+
+    // Step 2: go UP starting from one strike ABOVE supportOIStrike, find first where call OI > put OI
+    let resistanceOIStrike = null;
+    let startSearch = false;
+    for (const r of sorted) {
+      if (!startSearch) {
+        // start searching from the strike just above supportOIStrike (or above spot if none found)
+        const threshold = supportOIStrike ?? currentSpot;
+        if (r.strike > threshold) startSearch = true;
+        else continue;
+      }
+      if ((r.call?.oi || 0) > (r.put?.oi || 0)) { resistanceOIStrike = r.strike; break; }
+    }
+
+    return { resistanceOIStrike, supportOIStrike };
+  }, [displayChain, currentSpot]);
+
   // Column stats for highlights
   const stats = useMemo(() => ({
     callOI: getColumnStats(displayChain, r => r.call?.oi),
@@ -97,6 +143,74 @@ export default function OptionChainTable() {
     theory40: calculateTheory40(displayChain, currentSpot),
     vt: calculateVT(displayChain, currentSpot),
   }), [displayChain, currentSpot]);
+
+  // Strong S/R — compute reversal values (price levels) for strong and 2nd-level strikes
+  useEffect(() => {
+    if (!displayChain.length || currentSpot <= 0) return;
+
+    const isMax = (val, st) => st.max > 0 && val >= st.max;
+    const isSec = (val, st) => st.second > 0 && val >= st.second && !isMax(val, st);
+
+    // Reversal value at a strike index
+    const resRev = (r) => {
+      const upper = strikeMap[r.strike + strikeGap];
+      if (!upper) return null;
+      return calculateResistance(currentSpot, r.put, upper.call);
+    };
+    const supRev = (r) => {
+      const lower = strikeMap[r.strike - strikeGap];
+      if (!lower) return null;
+      return calculateSupport(currentSpot, r.call, lower.put);
+    };
+
+    // Resistance: scan LOW → HIGH on call side
+    let strongR = null, strong2ndR = null;
+    for (const r of displayChain) {
+      const maxHits = [
+        isMax(r.call?.oi ?? 0, stats.callOI),
+        isMax(r.call?.oi_change ?? 0, stats.callCH),
+        isMax(r.call?.volume ?? 0, stats.callVO),
+      ].filter(Boolean).length;
+      const secHits = [
+        isSec(r.call?.oi ?? 0, stats.callOI),
+        isSec(r.call?.oi_change ?? 0, stats.callCH),
+        isSec(r.call?.volume ?? 0, stats.callVO),
+      ].filter(Boolean).length;
+
+      if (maxHits >= 2 && strongR === null) { strongR = resRev(r); }
+      else if ((maxHits >= 1 && secHits >= 1) || secHits >= 2) { if (strong2ndR === null) strong2ndR = resRev(r); }
+      if (strongR !== null && strong2ndR !== null) break;
+    }
+
+    // Support: scan HIGH → LOW on put side
+    let strongS = null, strong2ndS = null;
+    for (let i = displayChain.length - 1; i >= 0; i--) {
+      const r = displayChain[i];
+      const maxHits = [
+        isMax(r.put?.oi ?? 0, stats.putOI),
+        isMax(r.put?.oi_change ?? 0, stats.putCH),
+        isMax(r.put?.volume ?? 0, stats.putVO),
+      ].filter(Boolean).length;
+      const secHits = [
+        isSec(r.put?.oi ?? 0, stats.putOI),
+        isSec(r.put?.oi_change ?? 0, stats.putCH),
+        isSec(r.put?.volume ?? 0, stats.putVO),
+      ].filter(Boolean).length;
+
+      if (maxHits >= 2 && strongS === null) { strongS = supRev(r); }
+      else if ((maxHits >= 1 && secHits >= 1) || secHits >= 2) { if (strong2ndS === null) strong2ndS = supRev(r); }
+      if (strongS !== null && strong2ndS !== null) break;
+    }
+
+    // Only dispatch when at least one level is found — never wipe valid values with all-nulls
+    // (chain refreshes every 3s; a cycle with no strong level shouldn't clear the chart lines)
+    if (strongS !== null || strongR !== null || strong2ndS !== null || strong2ndR !== null) {
+      dispatch({ type: 'SET_STRONG_SR', payload: {
+        support: strongS, resistance: strongR,
+        support2nd: strong2ndS, resistance2nd: strong2ndR,
+      }});
+    }
+  }, [displayChain, stats, currentSpot, strikeGap, strikeMap, dispatch]);
 
   // Post-9:09 AM: check spot vs yesterday's Bromos levels.
   // If spot between S and R reversal → no change.
@@ -188,25 +302,27 @@ export default function OptionChainTable() {
     };
   }, [ftotals]);
 
-  // Colspan calculations — +1 each side for VOL/OI CHNG column
+  // Colspan calculations
   const callCols = useMemo(() => {
-    let cols = 3; // OI Chng + VOL/OI CHNG + S Level
+    let cols = 3; // OI Chng + S Level + LTP Level
     if (oiDisplayActive) cols++;
     if (volumeDisplayActive) cols++;
     if (ltpDisplayActive) cols++;
+    if (volOiCngActive) cols++;
     if (greeksActive) cols += 6;
     return cols;
-  }, [oiDisplayActive, volumeDisplayActive, ltpDisplayActive, greeksActive]);
+  }, [oiDisplayActive, volumeDisplayActive, ltpDisplayActive, volOiCngActive, greeksActive]);
 
   const putCols = useMemo(() => {
-    let cols = 3; // S Level + VOL/OI CHNG + OI Chng
+    let cols = 3; // S Level + LTP Level + OI Chng
     if (oiDisplayActive) cols++;
     if (volumeDisplayActive) cols++;
     if (ltpDisplayActive) cols++;
+    if (volOiCngActive) cols++;
     if (mmiDisplayActive) cols++;
     if (greeksActive) cols += 6;
     return cols;
-  }, [oiDisplayActive, volumeDisplayActive, ltpDisplayActive, mmiDisplayActive, greeksActive]);
+  }, [oiDisplayActive, volumeDisplayActive, ltpDisplayActive, volOiCngActive, mmiDisplayActive, greeksActive]);
 
   // Fetch VOL/OI change data every 15s
   const volOiFetchRef = useRef(null);
@@ -231,10 +347,9 @@ export default function OptionChainTable() {
 
   const handleLtpClick = (optionType, strike, ltp, delta) => {
     dispatch({
-      type: 'SET_SELECTED_OPTION',
+      type: 'OPEN_LTP_POPUP',
       payload: { type: optionType, strike, ltp, delta, spot: currentSpot },
     });
-    if (!state.ltpCalcActive) dispatch({ type: 'TOGGLE_LTP_CALC' });
   };
 
   const handleOIClick = (strike, type) => {
@@ -243,6 +358,42 @@ export default function OptionChainTable() {
 
   const handleOIChngClick = (strike, type) => {
     dispatch({ type: 'SET_STRIKE_DATA_CHART_MODAL', payload: { strike, type } });
+  };
+
+  // S Level single click — commits the source after 280ms (cancelled if dblclick fires first)
+  const handleSLevelClick = (e, optType, strike, ltp, delta) => {
+    e.stopPropagation();
+    // If a timer is already pending, this is the 2nd tap of a double-click — ignore
+    if (singleClickTimerRef.current) {
+      clearTimeout(singleClickTimerRef.current);
+      singleClickTimerRef.current = null;
+      return;
+    }
+    const data = { type: optType, strike, ltp: parseFloat(ltp || 0), delta: parseFloat(delta || 0) };
+    // Show immediate highlight so user gets visual feedback
+    setSelectedSLevel({ strike, type: optType });
+    // Commit to ref after delay (double-click will cancel this before it fires)
+    singleClickTimerRef.current = setTimeout(() => {
+      committedSourceRef.current = data;
+      singleClickTimerRef.current = null;
+    }, 280);
+  };
+
+  // S Level double click — cancel pending single-click and open popup using committed source
+  const handleSLevelDblClick = (e, reversalValue) => {
+    e.stopPropagation();
+    if (reversalValue === null || reversalValue === undefined) return;
+    // Cancel the pending single-click commit so source stays as previously committed cell
+    if (singleClickTimerRef.current) {
+      clearTimeout(singleClickTimerRef.current);
+      singleClickTimerRef.current = null;
+    }
+    const src = committedSourceRef.current;
+    if (!src) return;
+    dispatch({
+      type: 'OPEN_LTP_POPUP',
+      payload: { ...src, spot: currentSpot, targetReversal: reversalValue },
+    });
   };
 
   // Format shifting badge text: 9:30 SFTB 25000 > 25400 or just the strike if no shift
@@ -294,6 +445,7 @@ export default function OptionChainTable() {
   }
 
   return (
+    <>
     <table id="optionTable" className={greeksActive ? 'show-greeks' : ''}>
       <thead>
         {/* Main Header Row */}
@@ -378,13 +530,16 @@ export default function OptionChainTable() {
           {oiDisplayActive && <th className="call-sub data-col-cell oi-col">OI</th>}
           {volumeDisplayActive && <th className="call-sub data-col-cell vol-col">Vol</th>}
           {ltpDisplayActive && <th className="call-sub ltp-col-cell ltp-col">LTP/Chng</th>}
-          <th
-            className="call-sub data-col-cell voichng-header"
-            style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
-            onClick={() => dispatch({ type: 'CYCLE_VOLOICHNG_WINDOW' })}
-            title="Click to cycle 5m → 15m → 30m"
-          >VOL/OI<br/>CHNG {volOiCngWindow}m</th>
-          <th className="call-sub data-col-cell">S/LTP Level</th>
+          {volOiCngActive && (
+            <th
+              className="call-sub data-col-cell voichng-header"
+              style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+              onClick={() => dispatch({ type: 'CYCLE_VOLOICHNG_WINDOW' })}
+              title="Click to cycle 5m → 15m → 30m"
+            >VOL/OI<br/>CHNG {volOiCngWindow}m</th>
+          )}
+          <th className="call-sub data-col-cell slevel-header">LTP Level</th>
+          <th className="call-sub data-col-cell slevel-header">S Level</th>
 
           <th
             className="strike-sub strike-col-cell"
@@ -393,13 +548,16 @@ export default function OptionChainTable() {
             title="Click to view Shifting Data"
           >OI/OI Chng</th>
 
-          <th className="put-sub data-col-cell">S/LTP Level</th>
-          <th
-            className="put-sub data-col-cell voichng-header"
-            style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
-            onClick={() => dispatch({ type: 'CYCLE_VOLOICHNG_WINDOW' })}
-            title="Click to cycle 5m → 15m → 30m"
-          >VOL/OI<br/>CHNG {volOiCngWindow}m</th>
+          <th className="put-sub data-col-cell slevel-header">S Level</th>
+          <th className="put-sub data-col-cell slevel-header">LTP Level</th>
+          {volOiCngActive && (
+            <th
+              className="put-sub data-col-cell voichng-header"
+              style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+              onClick={() => dispatch({ type: 'CYCLE_VOLOICHNG_WINDOW' })}
+              title="Click to cycle 5m → 15m → 30m"
+            >VOL/OI<br/>CHNG {volOiCngWindow}m</th>
+          )}
           {ltpDisplayActive && <th className="put-sub ltp-col-cell ltp-col">LTP/Chng</th>}
           {volumeDisplayActive && <th className="put-sub data-col-cell vol-col">Vol</th>}
           {oiDisplayActive && <th className="put-sub data-col-cell oi-col">OI</th>}
@@ -503,6 +661,22 @@ export default function OptionChainTable() {
                       >
                         <span className="spot-label">SPOT</span>
                         <span className="spot-value">{currentSpot.toFixed(2)}</span>
+                        {spotChange !== 0 && (
+                          <span className={`spot-diff ${spotChange >= 0 ? 'spot-diff-up' : 'spot-diff-down'}`}>
+                            {spotChange >= 0 ? '+' : ''}{spotChange.toFixed(2)} ({spotPctChange >= 0 ? '+' : ''}{spotPctChange.toFixed(2)}%)
+                          </span>
+                        )}
+                        {futuresLtp > 0 && (
+                          <span className="spot-futures">
+                            <span className="spot-futures-label">FUT</span>
+                            <span className="spot-futures-ltp">{futuresLtp.toFixed(2)}</span>
+                            {futuresChange !== 0 && (
+                              <span className={`spot-futures-diff ${futuresChange >= 0 ? 'spot-diff-up' : 'spot-diff-down'}`}>
+                                {futuresChange >= 0 ? '+' : ''}{futuresChange.toFixed(2)} ({futuresPctChange >= 0 ? '+' : ''}{futuresPctChange.toFixed(2)}%)
+                              </span>
+                            )}
+                          </span>
+                        )}
                       </div>
                     </td>
 
@@ -588,8 +762,8 @@ export default function OptionChainTable() {
                   </td>
                 )}
 
-                {/* Call VOL/OI CHNG — change over selected window */}
-                {(() => {
+                {/* Call VOL/OI CHNG — change over selected window (hidden by default) */}
+                {volOiCngActive && (() => {
                   const d = volOiWindowData[String(r.strike)];
                   const cv = d?.callVol ?? null;
                   const co = d?.callOI  ?? null;
@@ -609,15 +783,30 @@ export default function OptionChainTable() {
                   );
                 })()}
 
-                {/* Call S Level (Resistance) */}
-                <td className={`data-col-cell ${isCallITM}`}>
-                  {formatReversal(resistanceValue)}
-                  {ltpAtResistance !== null && !isNaN(ltpAtResistance) && ltpAtResistance > 0 && (
-                    <span style={{ fontSize: '10px', color: '#666', display: 'block', marginTop: '1px' }}>
-                      {ltpAtResistance.toFixed(1)}
-                    </span>
-                  )}
+                {/* Call LTP Level (at Resistance) */}
+                <td className={`data-col-cell slevel-cell ${isCallITM}`}>
+                  {ltpAtResistance !== null && !isNaN(ltpAtResistance) && ltpAtResistance > 0
+                    ? <span className="slevel-ltp">{ltpAtResistance.toFixed(1)}</span>
+                    : <span className="slevel-na">—</span>}
                 </td>
+
+                {/* Call S Level (Resistance) */}
+                {(() => {
+                  const isSelected = selectedSLevel?.strike === r.strike && selectedSLevel?.type === 'call';
+                  const isResOI = r.strike === resistanceOIStrike;
+                  return (
+                    <td
+                      className={`data-col-cell slevel-cell slevel-clickable slevel-call ${isCallITM}${isSelected ? ' slevel-selected' : ''}`}
+                      onClick={e => handleSLevelClick(e, 'call', r.strike, r.call?.ltp, callDelta)}
+                      onDoubleClick={e => handleSLevelDblClick(e, resistanceValue)}
+                      title={isSelected ? 'Double-click another S Level to calculate LTP' : 'Click to select • Double-click target to calculate'}
+                    >
+                      <span className="slevel-val">{formatReversal(resistanceValue)}</span>
+                      {isResOI && <span className="slevel-oi-star slevel-oi-star-red">★</span>}
+                      {isSelected && <span className="slevel-pin">📌</span>}
+                    </td>
+                  );
+                })()}
 
                 {/* STRIKE */}
                 <td className="strike-col strike-col-cell" style={{ position: 'relative' }}>
@@ -664,17 +853,32 @@ export default function OptionChainTable() {
                 </td>
 
                 {/* Put S Level (Support) */}
-                <td className={`data-col-cell ${isPutITM}`}>
-                  {formatReversal(supportValue)}
-                  {ltpAtSupport !== null && !isNaN(ltpAtSupport) && ltpAtSupport > 0 && (
-                    <span style={{ fontSize: '10px', color: '#666', display: 'block', marginTop: '1px' }}>
-                      {ltpAtSupport.toFixed(1)}
-                    </span>
-                  )}
+                {(() => {
+                  const isSelected = selectedSLevel?.strike === r.strike && selectedSLevel?.type === 'put';
+                  const isSupOI = r.strike === supportOIStrike;
+                  return (
+                    <td
+                      className={`data-col-cell slevel-cell slevel-clickable slevel-put ${isPutITM}${isSelected ? ' slevel-selected' : ''}`}
+                      onClick={e => handleSLevelClick(e, 'put', r.strike, r.put?.ltp, putDelta)}
+                      onDoubleClick={e => handleSLevelDblClick(e, supportValue)}
+                      title={isSelected ? 'Double-click another S Level to calculate LTP' : 'Click to select • Double-click target to calculate'}
+                    >
+                      <span className="slevel-val">{formatReversal(supportValue)}</span>
+                      {isSupOI && <span className="slevel-oi-star slevel-oi-star-green">★</span>}
+                      {isSelected && <span className="slevel-pin">📌</span>}
+                    </td>
+                  );
+                })()}
+
+                {/* Put LTP Level (at Support) */}
+                <td className={`data-col-cell slevel-cell ${isPutITM}`}>
+                  {ltpAtSupport !== null && !isNaN(ltpAtSupport) && ltpAtSupport > 0
+                    ? <span className="slevel-ltp">{ltpAtSupport.toFixed(1)}</span>
+                    : <span className="slevel-na">—</span>}
                 </td>
 
-                {/* Put VOL/OI CHNG — change over selected window */}
-                {(() => {
+                {/* Put VOL/OI CHNG — change over selected window (hidden by default) */}
+                {volOiCngActive && (() => {
                   const d = volOiWindowData[String(r.strike)];
                   const pv = d?.putVol ?? null;
                   const po = d?.putOI  ?? null;
@@ -783,15 +987,22 @@ export default function OptionChainTable() {
           {oiDisplayActive && <td className="footer-data-cell call-footer">{fmtLots(ftotals.tcOI)}</td>}
           {volumeDisplayActive && <td className="footer-data-cell call-footer">{fmtLots(ftotals.tcVOL)}</td>}
           {ltpDisplayActive && <td className="footer-data-cell call-footer" />}
+          {volOiCngActive && <td className="footer-data-cell call-footer" />}
+          {/* Call LTP Level + S Level footer — empty */}
           <td className="footer-data-cell call-footer" />
-          {/* Call VOL/OI CHNG footer — empty */}
           <td className="footer-data-cell call-footer" />
 
-          <td className="footer-total-label">PCR: {pcrOI}</td>
+          <td
+            className="footer-total-label"
+            style={{ cursor: 'pointer', textDecoration: 'underline dotted' }}
+            title="Click to view PCR chart"
+            onClick={() => setPcrModalOpen(true)}
+          >PCR: {pcrOI}</td>
 
-          {/* Put VOL/OI CHNG footer — empty */}
+          {/* Put S Level + LTP Level footer — empty */}
           <td className="footer-data-cell put-footer" />
           <td className="footer-data-cell put-footer" />
+          {volOiCngActive && <td className="footer-data-cell put-footer" />}
           {ltpDisplayActive && <td className="footer-data-cell put-footer" />}
           {volumeDisplayActive && <td className="footer-data-cell put-footer">{fmtLots(ftotals.tpVOL)}</td>}
           {oiDisplayActive && <td className="footer-data-cell put-footer">{fmtLots(ftotals.tpOI)}</td>}
@@ -810,8 +1021,7 @@ export default function OptionChainTable() {
         {/* 6-Box Summary Row */}
         {(() => {
           const totalCols = callCols + 1 + putCols;
-          const { tcOI, tcCH, tcVOL, tpOI, tpCH, tpVOL, tcDelta, tpDelta, tcIV, tpIV } = ftotals;
-          const pcrVol = tcVOL > 0 ? (tpVOL / tcVOL).toFixed(2) : '0.00';
+          const { tcOI, tcCH, tcVOL, tpOI, tpCH, tpVOL } = ftotals;
 
           const pct = (a, b) => {
             const mx = Math.max(Math.abs(a), Math.abs(b));
@@ -819,57 +1029,59 @@ export default function OptionChainTable() {
             return [Math.round(Math.abs(a) / mx * 100), Math.round(Math.abs(b) / mx * 100)];
           };
 
-          const SixBox = ({ label, bullVal, bearVal, bullPct, bearPct, isBullish }) => (
-            <div className="sixbox">
-              <div className="sixbox-label">{label}</div>
-              <div className="sixbox-row">
-                <div className="sixbox-side sixbox-bull">
-                  <div className="sixbox-tag">Bullish</div>
-                  <div className="sixbox-val">{bullVal}</div>
-                  <div className="sixbox-pct">({bullPct}%)</div>
-                </div>
-                <div className={`sixbox-arrow ${isBullish ? 'sixbox-arr-bull' : 'sixbox-arr-bear'}`}>
-                  {isBullish ? '«' : '»'}
-                </div>
-                <div className="sixbox-side sixbox-bear">
-                  <div className="sixbox-tag">Bearish</div>
-                  <div className="sixbox-val">{bearVal}</div>
-                  <div className="sixbox-pct">({bearPct}%)</div>
+          const SixBox = ({ label, callVal, putVal, callPct, putPct, isBullish }) => {
+            const arrow  = isBullish ? '↓' : '↑';
+            const color  = isBullish ? '#4caf50' : '#f44336';
+            const signal = isBullish ? 'BULLISH' : 'BEARISH';
+            return (
+              <div className="sixbox">
+                <div className="sixbox-label">{label}</div>
+                <div className="sixbox-row">
+                  <div className="sixbox-side sixbox-call">
+                    <div className="sixbox-tag">Call</div>
+                    <div className="sixbox-val">{callVal}</div>
+                    <div className="sixbox-pct">({callPct}%)</div>
+                  </div>
+                  <div className="sixbox-arrow" style={{ color, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'1px' }}>
+                    <span style={{
+                      fontSize:'22px', lineHeight:1, fontWeight:900,
+                      animation: isBullish
+                        ? 'arrow-down-bounce 1s ease-in-out infinite'
+                        : 'arrow-up-bounce 1s ease-in-out infinite',
+                      display:'inline-block'
+                    }}>{arrow}</span>
+                    <span style={{ fontSize:'11px', fontWeight:900, letterSpacing:'0.8px', textTransform:'uppercase', marginTop:'2px' }}>{signal}</span>
+                  </div>
+                  <div className="sixbox-side sixbox-put">
+                    <div className="sixbox-tag">Put</div>
+                    <div className="sixbox-val">{putVal}</div>
+                    <div className="sixbox-pct">({putPct}%)</div>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
+            );
+          };
 
           const [vcp, vpp] = pct(tcVOL, tpVOL);
           const [ocp, opp] = pct(tcOI, tpOI);
           const [ccp, cpp] = pct(tcCH, tpCH);
-          const [dcp, dpp] = pct(tcDelta, tpDelta);
-          const [icp, ipp] = pct(tcIV, tpIV);
 
           return (
             <tr className="sentiment-footer-row">
               <td colSpan={totalCols}>
                 <div className="sixbox-row-wrap">
                   <SixBox label="Volume"
-                    bullVal={fmtLots(tcVOL)} bearVal={fmtLots(tpVOL)}
-                    bullPct={vcp} bearPct={vpp} isBullish={tcVOL >= tpVOL} />
+                    callVal={fmtLots(tcVOL)} putVal={fmtLots(tpVOL)}
+                    callPct={vcp} putPct={vpp}
+                    isBullish={tcVOL >= tpVOL} />
                   <SixBox label="Open Interest"
-                    bullVal={fmtLots(tcOI)} bearVal={fmtLots(tpOI)}
-                    bullPct={ocp} bearPct={opp} isBullish={tcOI >= tpOI} />
+                    callVal={fmtLots(tcOI)} putVal={fmtLots(tpOI)}
+                    callPct={ocp} putPct={opp}
+                    isBullish={tpOI > tcOI} />
                   <SixBox label="OI Change"
-                    bullVal={fmtLots(tcCH)} bearVal={fmtLots(tpCH)}
-                    bullPct={ccp} bearPct={cpp} isBullish={tcCH >= tpCH} />
-                  <SixBox label="PCR"
-                    bullVal={pcrOI} bearVal={pcrVol}
-                    bullPct={parseFloat(pcrOI) >= parseFloat(pcrVol) ? 100 : Math.round(parseFloat(pcrOI)/parseFloat(pcrVol)*100)}
-                    bearPct={parseFloat(pcrVol) >= parseFloat(pcrOI) ? 100 : Math.round(parseFloat(pcrVol)/parseFloat(pcrOI)*100)}
-                    isBullish={parseFloat(pcrOI) >= parseFloat(pcrVol)} />
-                  <SixBox label="MMI Delta"
-                    bullVal={tcDelta.toFixed(2)} bearVal={tpDelta.toFixed(2)}
-                    bullPct={dcp} bearPct={dpp} isBullish={tcDelta >= Math.abs(tpDelta)} />
-                  <SixBox label="MMI IV"
-                    bullVal={tcIV.toFixed(2)} bearVal={tpIV.toFixed(2)}
-                    bullPct={icp} bearPct={ipp} isBullish={tcIV >= tpIV} />
+                    callVal={fmtLots(tcCH)} putVal={fmtLots(tpCH)}
+                    callPct={ccp} putPct={cpp}
+                    isBullish={tpCH > tcCH} />
                 </div>
               </td>
             </tr>
@@ -877,5 +1089,7 @@ export default function OptionChainTable() {
         })()}
       </tfoot>
     </table>
+    <PCRChartModal open={pcrModalOpen} onClose={() => setPcrModalOpen(false)} />
+    </>
   );
 }

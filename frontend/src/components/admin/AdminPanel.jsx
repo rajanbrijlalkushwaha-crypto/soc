@@ -426,6 +426,8 @@ function UpstoxAppsPanel({ adminToken }) {
   const [apps,         setApps]        = useState([]);
   const [adminEmail,   setAdminEmail]  = useState('');
   const [emailTime,    setEmailTime]   = useState('08:00');
+  const [otpEmail,     setOtpEmail]    = useState('');
+  const [otpEmailPass, setOtpEmailPass]= useState('');
   const [newRow,       setNewRow]      = useState({ ...BLANK });
   const [editSecrets,  setEditSecrets] = useState({});
   const [saving,       setSaving]      = useState(null);
@@ -443,6 +445,7 @@ function UpstoxAppsPanel({ adminToken }) {
         setApps(d.apps || []);
         setAdminEmail(d.admin_email || '');
         setEmailTime(d.email_time   || '08:00');
+        setOtpEmail(d.otp_email     || '');
       }).catch(() => {});
   }, [adminToken]);
 
@@ -485,7 +488,9 @@ function UpstoxAppsPanel({ adminToken }) {
   const saveSettings = async () => {
     setMsg('');
     try {
-      const d = await ADMIN_API('/api/admin/upstox-settings', adminToken, { method: 'POST', body: { admin_email: adminEmail, email_time: emailTime } });
+      const body = { admin_email: adminEmail, email_time: emailTime, otp_email: otpEmail };
+      if (otpEmailPass) body.otp_email_pass = otpEmailPass;
+      const d = await ADMIN_API('/api/admin/upstox-settings', adminToken, { method: 'POST', body });
       setMsg(d.message || (d.success ? 'Settings saved!' : 'Failed'));
     } catch { setMsg('Error'); }
   };
@@ -554,8 +559,8 @@ function UpstoxAppsPanel({ adminToken }) {
               <th style={th}>API Key</th>
               <th style={th}>API Secret</th>
               <th style={th}>Redirect URI</th>
-              <th style={th}>Token</th>
-              <th style={th}>Paste Token</th>
+              <th style={th}>Token Status</th>
+              <th style={th}>Manual Access Token</th>
               <th style={th}></th>
             </tr>
           </thead>
@@ -593,21 +598,28 @@ function UpstoxAppsPanel({ adminToken }) {
                     </button>
                   )}
                 </td>
-                <td style={{ ...td, minWidth:'220px' }}>
-                  <div style={{ display:'flex', gap:'4px' }}>
-                    <input
-                      className="admp-input"
-                      style={{ marginBottom:0, flex:1, fontSize:'11px' }}
-                      type="password"
-                      placeholder="Paste access token…"
-                      value={tokenInputs[a.id] || ''}
-                      onChange={e => setTokenInputs(t => ({ ...t, [a.id]: e.target.value }))}
-                    />
-                    <button className="admp-btn admp-btn-success" style={{ padding:'4px 10px', whiteSpace:'nowrap' }}
-                      disabled={!tokenInputs[a.id] || settingToken === a.id}
-                      onClick={() => setToken(a.id)}>
-                      {settingToken === a.id ? '…' : '✓ Set'}
-                    </button>
+                <td style={{ ...td, minWidth:'260px' }}>
+                  <div style={{ display:'flex', gap:'4px', flexDirection:'column' }}>
+                    <div style={{ display:'flex', gap:'4px' }}>
+                      <input
+                        className="admp-input"
+                        style={{ marginBottom:0, flex:1, fontSize:'11px', fontFamily:'monospace' }}
+                        type="text"
+                        placeholder="Paste access token here…"
+                        value={tokenInputs[a.id] || ''}
+                        onChange={e => setTokenInputs(t => ({ ...t, [a.id]: e.target.value }))}
+                      />
+                      <button className="admp-btn admp-btn-success" style={{ padding:'4px 12px', whiteSpace:'nowrap' }}
+                        disabled={!tokenInputs[a.id] || settingToken === a.id}
+                        onClick={() => setToken(a.id)}>
+                        {settingToken === a.id ? '…' : '✓ Set Token'}
+                      </button>
+                    </div>
+                    {tokenInputs[a.id] && (
+                      <div style={{ fontSize:'10px', color:'#888', wordBreak:'break-all', maxHeight:'32px', overflow:'hidden' }}>
+                        {tokenInputs[a.id].substring(0, 60)}…
+                      </div>
+                    )}
                   </div>
                 </td>
                 <td style={{ ...td, whiteSpace:'nowrap' }}>
@@ -639,10 +651,32 @@ function UpstoxAppsPanel({ adminToken }) {
         </table>
       </div>
 
+      {/* OTP Email Credentials */}
+      <div style={{ background:'#fff8f0', border:'2px solid #ff6f00', borderRadius:'8px', padding:'12px 14px', marginTop:'14px' }}>
+        <div style={{ fontSize:'12px', fontWeight:'700', color:'#e65100', marginBottom:'8px', borderBottom:'1px solid #ffe0b2', paddingBottom:'6px' }}>
+          📧 OTP / Reset Password Email Credentials
+        </div>
+        <div style={{ display:'flex', gap:'10px', flexWrap:'wrap', alignItems:'flex-end' }}>
+          <label style={{ display:'flex', flexDirection:'column', gap:'4px', fontSize:'12px', color:'#444', flex:1, minWidth:'200px' }}>
+            Gmail Address (used for OTP &amp; reset links)
+            <input className="admp-input" style={{ marginBottom:0, color:'#000', fontWeight:'600' }} type="email" placeholder="yourapp@gmail.com"
+              value={otpEmail} onChange={e => setOtpEmail(e.target.value)} />
+          </label>
+          <label style={{ display:'flex', flexDirection:'column', gap:'4px', fontSize:'12px', color:'#444', flex:1, minWidth:'200px' }}>
+            Gmail App Password <span style={{ fontWeight:'normal', color:'#aaa' }}>(leave blank to keep existing)</span>
+            <input className="admp-input" style={{ marginBottom:0, color:'#000', fontWeight:'600', fontFamily:'monospace' }} type="text" placeholder="app password (16 chars)"
+              value={otpEmailPass} onChange={e => setOtpEmailPass(e.target.value)} />
+          </label>
+        </div>
+        <div style={{ fontSize:'11px', color:'#999', marginTop:'6px' }}>
+          Use a <b>Gmail App Password</b> (not your Gmail login password). Generate one at: Google Account → Security → 2-Step Verification → App Passwords.
+        </div>
+      </div>
+
       {/* Settings + Send */}
       <div style={{ display:'flex', gap:'10px', alignItems:'flex-end', marginTop:'12px', flexWrap:'wrap' }}>
         <label style={{ display:'flex', flexDirection:'column', gap:'4px', fontSize:'12px', color:'#666', flex:1, minWidth:'180px' }}>
-          Admin Email
+          Admin Email (receives 8 AM token link)
           <input className="admp-input" style={{ marginBottom:0 }} type="email" placeholder="your@email.com"
             value={adminEmail} onChange={e => setAdminEmail(e.target.value)} />
         </label>

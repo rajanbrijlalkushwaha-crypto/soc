@@ -57,6 +57,8 @@ export default function SplitChart() {
     strategy40Resistance, strategy40ResistanceReversal,
     mctrSupport, mctrSupportRev, mctrResistance, mctrResistanceRev,
     mctrSupportFoundAt, mctrResistanceFoundAt,
+    strongSupport, strongResistance,
+    strong2ndSupport, strong2ndResistance,
   } = state;
 
   const containerRef    = useRef();
@@ -68,6 +70,7 @@ export default function SplitChart() {
   const plinesRef       = useRef([]);   // active price lines
   const lineLabelDataRef= useRef([]);   // [{price, color, title}] for HTML overlay
   const overlayRef      = useRef();     // HTML overlay for big price-line labels
+  const tooltipRef      = useRef();     // OHLC hover tooltip div
   const vlineRef        = useRef();     // vertical separator div
   const openTsRef       = useRef(null); // 9:15 open timestamp
   const allMktRef       = useRef([]);   // full day market candles (historical replay)
@@ -77,6 +80,7 @@ export default function SplitChart() {
   const [showBromos, setShowBromos] = useState(true);
   const [showMCTR,   setShowMCTR]   = useState(true);
   const [showAI,     setShowAI]     = useState(true);
+  const [showStrong, setShowStrong] = useState(true);
   const [aiSignals,  setAiSignals]  = useState({ res: [], sup: [] });  // all signals for current symbol
   const [tf,         setTf]         = useState(5);     // timeframe in minutes
 
@@ -144,51 +148,65 @@ export default function SplitChart() {
       return curHHMM >= foundAt.substring(0, 5);
     };
 
+    const RED   = '#e53935';
+    const GREEN = '#1b8a1b';
     const add = (price, color, title, time = null, style = 0, width = 2) => {
       if (price == null || isNaN(price)) return;
       const pl = series.createPriceLine({ price: Number(price), color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title: '' });
       plinesRef.current.push(pl);
       const timeStr = time ? ` @${time.substring(0, 5)}` : '';
-      lineLabelDataRef.current.push({ price: Number(price), color, title: `${title} ${Number(price)}${timeStr}` });
+      lineLabelDataRef.current.push({ price: Number(price), color, title: `${title} ${Number(price).toFixed(2)}${timeStr}` });
     };
 
     // Bromos — previous-day data, always visible
     if (showBromos) {
-      add(strategy40ResistanceReversal, '#cc0000', 'Bromos R', null, 0, 3);
-      add(strategy40SupportReversal,    '#007700', 'Bromos S', null, 0, 3);
+      add(strategy40ResistanceReversal, RED,   'Bromos R', null, 0, 2);
+      add(strategy40SupportReversal,    GREEN, 'Bromos S', null, 0, 2);
     }
 
     // MCTR — only show after found_at time in historical mode
     if (showMCTR) {
-      if (visible(mctrResistanceFoundAt)) add(mctrResistanceRev, '#9c27b0', 'MCTR-R', mctrResistanceFoundAt, 0, 2);
-      if (visible(mctrSupportFoundAt))    add(mctrSupportRev,    '#1565c0', 'MCTR-S', mctrSupportFoundAt,    0, 2);
+      if (visible(mctrResistanceFoundAt)) add(mctrResistanceRev, RED,   'MCTR-R', mctrResistanceFoundAt, 0, 2);
+      if (visible(mctrSupportFoundAt))    add(mctrSupportRev,    GREEN, 'MCTR-S', mctrSupportFoundAt,    0, 2);
     }
 
-    // AI signals — show all resistance + support for this symbol with score
+    // Strong S/R — 2+ of Vol/OI/OI-Chng at 100% on same strike (dashed)
+    if (showStrong) {
+      add(strongResistance,    RED,   'Strong R',      null, 2, 2);
+      add(strongSupport,       GREEN, 'Strong S',      null, 2, 2);
+      add(strong2ndResistance, RED,   '2nd Reversal R', null, 2, 1);
+      add(strong2ndSupport,    GREEN, '2nd Reversal S', null, 2, 1);
+    }
+
+    // AI signals — only show signals with trade_score >= 80
     if (showAI) {
       for (const sig of (aiSignals.res || [])) {
-        if (sig.from_reversal != null && visible(sig.trade_time)) {
+        if (sig.from_reversal != null && visible(sig.trade_time) && (sig.trade_score ?? 0) >= 80) {
           const scoreStr = sig.trade_score != null ? ` [${sig.trade_score}]` : '';
-          add(sig.from_reversal, '#ff6f00', `AI-R${scoreStr}`, sig.trade_time, 0, 3);
+          add(sig.from_reversal, RED,   `AI-R${scoreStr}`, sig.trade_time, 0, 2);
         }
       }
       for (const sig of (aiSignals.sup || [])) {
-        if (sig.from_reversal != null && visible(sig.trade_time)) {
+        if (sig.from_reversal != null && visible(sig.trade_time) && (sig.trade_score ?? 0) >= 80) {
           const scoreStr = sig.trade_score != null ? ` [${sig.trade_score}]` : '';
-          add(sig.from_reversal, '#00897b', `AI-S${scoreStr}`, sig.trade_time, 0, 3);
+          add(sig.from_reversal, GREEN, `AI-S${scoreStr}`, sig.trade_time, 0, 2);
         }
       }
     }
   }, [
     historicalMode, currentTime,
-    showBromos, showMCTR, showAI, aiSignals,
+    showBromos, showMCTR, showAI, showStrong, aiSignals,
     strategy40Support, strategy40SupportReversal, strategy40Resistance, strategy40ResistanceReversal,
     mctrSupport, mctrSupportRev, mctrResistance, mctrResistanceRev,
     mctrSupportFoundAt, mctrResistanceFoundAt,
+    strongSupport, strongResistance, strong2ndSupport, strong2ndResistance,
   ]);
 
-  // Redraw lines whenever overlays or data change
-  useEffect(() => { redrawLines(); }, [redrawLines]);
+  // Redraw lines whenever overlays or data change; auto-scale y-axis to show all lines
+  useEffect(() => {
+    redrawLines();
+    try { chartRef.current?.priceScale('right').applyOptions({ autoScale: true }); } catch (_) {}
+  }, [redrawLines]);
 
   // ── RAF loop: position HTML overlay labels over price lines ─────────────────
   useEffect(() => {
@@ -210,7 +228,7 @@ export default function SplitChart() {
               try { y = chart.priceScale('right').priceToCoordinate(price); } catch (_) {}
             }
             if (y != null && y > 0) {
-              html += `<div style="position:absolute;right:70px;top:${y - 16}px;color:${color};font-size:18px;font-weight:900;background:rgba(255,255,255,0.88);padding:2px 6px 2px 10px;border-radius:4px;border-right:5px solid ${color};pointer-events:none;white-space:nowrap;line-height:1.4">${title}</div>`;
+              html += `<div style="position:absolute;right:70px;top:${y - 10}px;color:${color};font-size:11px;font-weight:700;background:rgba(255,255,255,0.88);padding:1px 5px 1px 7px;border-radius:3px;border-right:3px solid ${color};pointer-events:none;white-space:nowrap;line-height:1.4">${title}</div>`;
             }
           }
           overlay.innerHTML = html;
@@ -270,6 +288,32 @@ export default function SplitChart() {
     plinesRef.current    = [];
     setStatus('loading');
 
+    // ── OHLC hover tooltip via crosshair ─────────────────────────────────────
+    chart.subscribeCrosshairMove(param => {
+      const tooltip = tooltipRef.current;
+      if (!tooltip) return;
+      if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) {
+        tooltip.style.display = 'none'; return;
+      }
+      const d = param.seriesData.get(series) || param.seriesData.get(preSeries);
+      if (!d) { tooltip.style.display = 'none'; return; }
+      // Format time from epoch
+      const dt = new Date(param.time * 1000);
+      const hh = String(dt.getUTCHours()).padStart(2,'0');
+      const mm = String(dt.getUTCMinutes()).padStart(2,'0');
+      tooltip.innerHTML = `<b>${hh}:${mm}</b>  O:${d.open?.toFixed(2)}  H:${d.high?.toFixed(2)}  L:${d.low?.toFixed(2)}  C:${d.close?.toFixed(2)}`;
+      const el = containerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      let left = param.point.x + 10;
+      let top  = param.point.y - 32;
+      if (left + 260 > rect.width) left = param.point.x - 270;
+      if (top < 4) top = 4;
+      tooltip.style.left    = `${left}px`;
+      tooltip.style.top     = `${top}px`;
+      tooltip.style.display = 'block';
+    });
+
     // Use server's data date if available; fallback to system date
     const today = (currentDataDate && currentDataDate !== '--') ? currentDataDate : new Date().toISOString().split('T')[0];
 
@@ -308,7 +352,19 @@ export default function SplitChart() {
 
       attachVLine();
       setStatus('ready');
-      try { chart.timeScale().fitContent(); } catch (_) {}
+      try { chart.priceScale('right').applyOptions({ autoScale: true }); } catch (_) {}
+      // Historical saved files: fitContent spreads all bars left→right
+      try {
+        chart.timeScale().applyOptions({ rightOffset: 0 });
+        chart.timeScale().fitContent();
+        setTimeout(() => {
+          try {
+            const ts = chart.timeScale();
+            const range = ts.getVisibleLogicalRange();
+            if (range) ts.setVisibleLogicalRange({ from: range.from - 4, to: range.to });
+          } catch (_) {}
+        }, 80);
+      } catch (_) {}
       return true;
     };
 
@@ -357,7 +413,26 @@ export default function SplitChart() {
 
       attachVLine();
       setStatus('ready');
-      try { chart.timeScale().fitContent(); } catch (_) {}
+      try { chart.priceScale('right').applyOptions({ autoScale: true }); } catch (_) {}
+      // Anchor view to trading day: pre-market on left, full day visible.
+      // This prevents WS series.update() from auto-scrolling to the right.
+      try {
+        chart.timeScale().applyOptions({ rightOffset: 3 });
+        // Scale how many hours to show based on timeframe
+        const viewHours = tf <= 1 ? 2.5 : tf <= 3 ? 4 : 7;
+        const viewEnd   = Math.min(
+          dateEpoch + MARKET_CLOSE_MIN * 60 + 5 * tf * 60,
+          preStart + viewHours * 3600,
+        );
+        setTimeout(() => {
+          try {
+            chart.timeScale().setVisibleRange({
+              from: preStart - 5 * tf * 60,   // a few bars before pre-market
+              to:   viewEnd,
+            });
+          } catch (_) {}
+        }, 80);
+      } catch (_) {}
       return true;
     };
 
@@ -508,53 +583,46 @@ export default function SplitChart() {
 
   return (
     <div className="sc-root">
-      {/* Overlay toggle bar */}
+      {/* Toolbar */}
       <div className="sc-toolbar">
         <span className="sc-toolbar-title">
-          {currentSymbol?.replace(/_/g, ' ')} · {tf}m Chart
+          {currentSymbol?.replace(/_/g, ' ')}
         </span>
-        {/* Timeframe selector */}
-        <div className="sc-tf-btns">
-          {[1, 3, 5, 15].map(t => (
-            <button
-              key={t}
-              className={`sc-tf-btn${tf === t ? ' active' : ''}`}
-              onClick={() => setTf(t)}
-            >{t}m</button>
+        {/* Timeframe dropdown */}
+        <select
+          value={tf}
+          onChange={e => setTf(Number(e.target.value))}
+          className="sc-tf-select"
+        >
+          {[1, 3, 5, 15, 30].map(t => (
+            <option key={t} value={t}>{t}m</option>
           ))}
-        </div>
-        <div className="sc-overlay-btns">
-          <button
-            className={btnClass(showBromos)}
-            style={{ '--btn-color': '#c00' }}
-            onClick={() => setShowBromos(v => !v)}
-            title="Toggle Bromos (Strategy 4.0) levels"
-          >
-            Bromos
-          </button>
-          <button
-            className={btnClass(showMCTR)}
-            style={{ '--btn-color': '#9c27b0' }}
-            onClick={() => setShowMCTR(v => !v)}
-            title="Toggle MCTR levels"
-          >
-            MCTR
-          </button>
-          {(() => {
-            const aiCount = (aiSignals.res?.length || 0) + (aiSignals.sup?.length || 0);
-            return (
-              <button
-                className={btnClass(showAI)}
-                style={{ '--btn-color': aiCount > 0 ? '#ff6f00' : '#888' }}
-                onClick={() => setShowAI(v => !v)}
-                title="Toggle AI signal levels"
-                disabled={aiCount === 0}
-              >
-                AI {aiCount > 0 && <span className="sc-ai-badge">{aiCount}</span>}
-              </button>
-            );
-          })()}
-        </div>
+        </select>
+        {/* Line toggle buttons */}
+        <button
+          className={btnClass(showBromos)}
+          style={{ '--btn-color': '#e53935' }}
+          onClick={() => setShowBromos(v => !v)}
+          title="Toggle Bromos levels"
+        >Bromos</button>
+        <button
+          className={btnClass(showMCTR)}
+          style={{ '--btn-color': '#9c27b0' }}
+          onClick={() => setShowMCTR(v => !v)}
+          title="Toggle MCTR levels"
+        >MCTR</button>
+        <button
+          className={btnClass(showAI)}
+          style={{ '--btn-color': '#ff6f00' }}
+          onClick={() => setShowAI(v => !v)}
+          title="Toggle AI levels (80%+ only)"
+        >AI</button>
+        <button
+          className={btnClass(showStrong)}
+          style={{ '--btn-color': '#6a1b9a' }}
+          onClick={() => setShowStrong(v => !v)}
+          title="Toggle Strong S/R (2+ metrics at 100%)"
+        >S/R</button>
         {!historicalMode && status === 'ready' && (
           <button
             className="sc-live-btn"
@@ -565,34 +633,6 @@ export default function SplitChart() {
         )}
       </div>
 
-      {/* Legend */}
-      {(showBromos || showMCTR || (showAI && (aiSignals.res?.length || aiSignals.sup?.length))) && (
-        <div className="sc-legend">
-          {showBromos && strategy40ResistanceReversal != null && (
-            <span className="sc-leg-item" style={{ color: '#c00' }}>■ Bromos R:{strategy40ResistanceReversal}</span>
-          )}
-          {showBromos && strategy40SupportReversal != null && (
-            <span className="sc-leg-item" style={{ color: '#006600' }}>■ Bromos S:{strategy40SupportReversal}</span>
-          )}
-          {showMCTR && mctrResistance != null && (
-            <span className="sc-leg-item" style={{ color: '#9c27b0' }}>■ MCTR-R:{mctrResistance}</span>
-          )}
-          {showMCTR && mctrSupport != null && (
-            <span className="sc-leg-item" style={{ color: '#1565c0' }}>■ MCTR-S:{mctrSupport}</span>
-          )}
-          {showAI && (aiSignals.res || []).map((sig, i) => sig.from_reversal != null && (
-            <span key={`air${i}`} className="sc-leg-item" style={{ color: '#ff6f00' }}>
-              ■ AI-R:{sig.from_reversal}{sig.trade_score != null ? ` (${sig.trade_score})` : ''}
-            </span>
-          ))}
-          {showAI && (aiSignals.sup || []).map((sig, i) => sig.from_reversal != null && (
-            <span key={`ais${i}`} className="sc-leg-item" style={{ color: '#00897b' }}>
-              ■ AI-S:{sig.from_reversal}{sig.trade_score != null ? ` (${sig.trade_score})` : ''}
-            </span>
-          ))}
-        </div>
-      )}
-
       {/* Chart area */}
       <div className="sc-chart-area">
         {status === 'loading' && <div className="sc-state">Loading chart…</div>}
@@ -600,12 +640,14 @@ export default function SplitChart() {
         {status === 'error'   && <div className="sc-state sc-state-err">Failed to load chart</div>}
         <div style={{ position: 'absolute', inset: 0 }}>
           <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-          {/* HTML overlay for big price-line labels */}
+          {/* HTML overlay for price-line labels */}
           <div ref={overlayRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 10 }} />
+          {/* OHLC hover tooltip */}
+          <div ref={tooltipRef} style={{ display: 'none', position: 'absolute', zIndex: 20, background: 'rgba(0,0,0,0.78)', color: '#fff', fontSize: '12px', fontWeight: 600, padding: '4px 10px', borderRadius: '5px', pointerEvents: 'none', whiteSpace: 'nowrap' }} />
           {/* Vertical separator: Pre-Market | Market */}
           <div ref={vlineRef} className="sc-vline" style={{ display: 'none' }}>
             <span className="sc-vline-pre">Pre-Market</span>
-            <span className="sc-vline-mkt">Market</span>
+            <span className="sc-vline-mkt">Market Open</span>
           </div>
         </div>
       </div>

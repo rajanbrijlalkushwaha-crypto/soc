@@ -879,6 +879,130 @@ async function fetchOptionChain(expiryDate, instrumentKey = CONFIG.INSTRUMENT_KE
   }
 }
 
+// ── Market-quote fetch: spot prev close + futures LTP ────────────────────────
+// Cache per instrument per IST date so we only hit Upstox once per day for
+// prev_close (which never changes intraday) and once per cycle for futures LTP.
+const _quoteDayCache  = {}; // instrumentKey → { day, prev_close }
+const _futuresKeyCache = {}; // underlyingSymbol → { day, instrument_key, expiry }
+
+// Returns { ltp, prev_close, change, pct_change } for any instrument_key.
+// Tries full quote first; falls back to OHLC endpoint which works pre-market too.
+async function fetchMarketQuote(instrumentKey) {
+  const token = getActiveToken();
+  if (!token) return null;
+  try {
+    // 1) Full market quote (works during trading hours)
+    const resp = await axios.get(`${CONFIG.UPSTOX_BASE_URL}/market-quote/quotes`, {
+      params: { instrument_key: instrumentKey },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
+    });
+    const data = resp.data?.data;
+    const key  = data && Object.keys(data)[0];
+    const q    = key ? data[key] : null;
+    const ltp  = q?.last_price ?? 0;
+    const prev = q?.close_price || q?.ohlc?.close || 0;
+
+    if (ltp > 0 || prev > 0) {
+      return { ltp, prev_close: prev, change: ltp - prev, pct_change: prev > 0 ? ((ltp - prev) / prev) * 100 : 0 };
+    }
+
+    // 2) OHLC fallback — returns daily candle with yesterday's close even pre-market
+    const oResp = await axios.get(`${CONFIG.UPSTOX_BASE_URL}/market-quote/ohlc`, {
+      params: { instrument_key: instrumentKey, interval: '1d' },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
+    });
+    const od   = oResp.data?.data;
+    const ok   = od && Object.keys(od)[0];
+    const o    = ok ? od[ok] : null;
+    const oltp = o?.last_price || o?.ohlc?.close || 0;
+    const oprev = o?.ohlc?.close || 0;
+    log(`[QUOTE OHLC] ${instrumentKey} → ltp:${oltp} prev:${oprev}`);
+    return { ltp: oltp, prev_close: oprev, change: oltp - oprev, pct_change: oprev > 0 ? ((oltp - oprev) / oprev) * 100 : 0 };
+  } catch (err) {
+    log(`[QUOTE] error ${instrumentKey}: ${err.message}`);
+    return null;
+  }
+}
+
+// Resolve nearest-expiry futures instrument_key for an index.
+// Uses option/contract endpoint (same one used for option chain) — reliable, no search API needed.
+// Monthly expiry (last expiry of the nearest month) = futures expiry.
+async function resolveFuturesKey(underlyingSymbol) {
+  const token = getActiveToken();
+  if (!token) return null;
+  const today = getCurrentIST().date;
+  const cached = _futuresKeyCache[underlyingSymbol];
+  if (cached && cached.day === today) return cached.instrument_key;
+  try {
+    // Map symbol → index instrument key (same key used for option chain fetch)
+    const indexKeyMap = {
+      'NIFTY':       'NSE_INDEX|Nifty 50',
+      'BANKNIFTY':   'NSE_INDEX|Nifty Bank',
+      'FINNIFTY':    'NSE_INDEX|Nifty Financial Services',
+      'MIDCPNIFTY':  'NSE_INDEX|NIFTY MID SELECT',
+      'NIFTYNXT50':  'NSE_INDEX|Nifty Next 50',
+      'SENSEX':      'BSE_INDEX|SENSEX',
+      'BANKEX':      'BSE_INDEX|BANKEX',
+      'SENSEX50':    'BSE_INDEX|SENSEX 50',
+    };
+    const indexKey = indexKeyMap[underlyingSymbol];
+    if (!indexKey) return null;
+
+    // Fetch available expiry dates (same endpoint as option chain — guaranteed to work)
+    const resp = await axios.get(`${CONFIG.UPSTOX_BASE_URL}/option/contract`, {
+      params: { instrument_key: indexKey },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
+    });
+    const contracts = resp.data?.data || [];
+
+    // Collect unique expiry dates >= today, sorted ascending
+    const expiries = [...new Set(
+      contracts.map(c => c.expiry).filter(e => e && e >= today)
+    )].sort();
+
+    if (!expiries.length) return null;
+
+    // Monthly expiry = last expiry in the nearest calendar month = futures expiry
+    // (Weekly options have multiple expiries per month; monthly is the last one)
+    const byMonth = {};
+    for (const e of expiries) {
+      byMonth[e.substring(0, 7)] = e; // keeps overwriting → ends up as last (latest) in month
+    }
+    const futExpiry = Object.values(byMonth).sort()[0]; // nearest monthly expiry
+    if (!futExpiry) return null;
+
+    // Construct Upstox futures instrument key: NSE_FO|NIFTY26APR17FUT
+    const [year, month, day] = futExpiry.split('-');
+    const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const mon = MONTHS[parseInt(month, 10) - 1];
+    const yy  = year.slice(2);
+    const exchange = ['SENSEX', 'BANKEX', 'SENSEX50'].includes(underlyingSymbol) ? 'BSE_FO' : 'NSE_FO';
+    const key = `${exchange}|${underlyingSymbol}${yy}${mon}${day}FUT`;
+
+    log(`[FUT] ${underlyingSymbol} → monthly expiry ${futExpiry} → key ${key}`);
+    _futuresKeyCache[underlyingSymbol] = { day: today, instrument_key: key, expiry: futExpiry };
+    return key;
+  } catch (err) {
+    log(`[FUT] Error resolving ${underlyingSymbol}: ${err.message}`);
+    return null;
+  }
+}
+
+// Map index instrument key → futures underlying symbol
+function getFuturesSymbol(instrumentKey) {
+  const map = {
+    'NSE_INDEX|Nifty 50':               'NIFTY',
+    'NSE_INDEX|Nifty Bank':             'BANKNIFTY',
+    'NSE_INDEX|Nifty Financial Services':'FINNIFTY',
+    'NSE_INDEX|NIFTY MID SELECT':       'MIDCPNIFTY',
+    'NSE_INDEX|Nifty Next 50':          'NIFTYNXT50',
+    'BSE_INDEX|SENSEX':                 'SENSEX',
+    'BSE_INDEX|BANKEX':                 'BANKEX',
+    'BSE_INDEX|SENSEX 50':              'SENSEX50',
+  };
+  return map[instrumentKey] || null;
+}
+
 // Analyze option chain
 function analyzeOptionChain(chainData) {
   if (!chainData.data || !Array.isArray(chainData.data)) {
@@ -1065,7 +1189,7 @@ const _expiryCache = {};
 const _dirCreated = new Set();
 
 // Save option chain data (COMPRESSED)
-function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CONFIG.INSTRUMENT_KEY) {
+async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CONFIG.INSTRUMENT_KEY) {
   try {
     const currentIST = getCurrentIST();
     
@@ -1165,11 +1289,57 @@ function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CO
         availableExpiries = ec.avail;
       } catch (_) {}
 
+      // ── Fetch spot prev_close + futures quote (parallel, non-blocking) ────────
+      let spotPrevClose = 0, spotChange = 0, spotPctChange = 0;
+      let futuresLtp = 0, futuresPrevClose = 0, futuresChange = 0, futuresPctChange = 0;
+      try {
+        const today = getCurrentIST().date;
+        // Spot prev_close: cache per day (never changes intraday)
+        const qCacheKey = `${instrumentKey}|${today}`;
+        if (!_quoteDayCache[qCacheKey] || !_quoteDayCache[qCacheKey].prev_close) {
+          const sq = await fetchMarketQuote(instrumentKey);
+          if (sq && sq.prev_close > 0) _quoteDayCache[qCacheKey] = { prev_close: sq.prev_close };
+        }
+        const sqCached = _quoteDayCache[qCacheKey];
+        if (sqCached) {
+          spotPrevClose  = sqCached.prev_close;
+          spotChange     = spotPrice - spotPrevClose;
+          spotPctChange  = spotPrevClose > 0 ? (spotChange / spotPrevClose) * 100 : 0;
+        }
+        // Futures quote: fetch every cycle for live LTP
+        const futSym = getFuturesSymbol(instrumentKey);
+        if (futSym) {
+          const futKey = await resolveFuturesKey(futSym);
+          if (futKey) {
+            const fq = await fetchMarketQuote(futKey);
+            if (fq) {
+              futuresLtp        = fq.ltp;
+              futuresPrevClose  = fq.prev_close;
+              futuresChange     = fq.change;
+              futuresPctChange  = fq.pct_change;
+            }
+          }
+        }
+      } catch (_) {}
+
+      // Inject spot/futures into disk file metadata (in scope here)
+      dataToSave.m.spot_price      = spotPrice;
+      dataToSave.m.spot_prev_close = spotPrevClose;
+      dataToSave.m.spot_change     = spotChange;
+      dataToSave.m.spot_pct_change = spotPctChange;
+      dataToSave.m.futures_ltp     = futuresLtp;
+      dataToSave.m.futures_prev    = futuresPrevClose;
+      dataToSave.m.futures_change  = futuresChange;
+      dataToSave.m.futures_pct     = futuresPctChange;
+
       const cacheKey    = safeInstrumentName.toUpperCase();
       const newSnapshot = {
         symbol: safeInstrumentName, expiry: expiryDate,
         date: istDateFolder, time: currentIST.time,
         spot_price: spotPrice, lot_size: getLotSize(instrumentKey),
+        spot_prev_close: spotPrevClose, spot_change: spotChange, spot_pct_change: spotPctChange,
+        futures_ltp: futuresLtp, futures_prev_close: futuresPrevClose,
+        futures_change: futuresChange, futures_pct_change: futuresPctChange,
         chain: cacheChain, isExpiryDay, currentExpiry, nextExpiry, availableExpiries
       };
 
@@ -2052,6 +2222,7 @@ app.get('/api/admin/upstox-apps', authenticateAdmin, (req, res) => {
     success: true, apps,
     admin_email: process.env.ADMIN_EMAIL || '',
     email_time:  CONFIG.UPSTOX_EMAIL_TIME || '08:00',
+    otp_email:   process.env.OTP_EMAIL   || '',
   });
 });
 
@@ -2114,11 +2285,13 @@ app.delete('/api/admin/upstox-apps/:id', authenticateAdmin, (req, res) => {
   res.json({ success: true, message: 'Deleted' });
 });
 
-// ── POST /api/admin/upstox-settings (admin email + daily time) ───────────────
+// ── POST /api/admin/upstox-settings (admin email + daily time + OTP email) ───
 app.post('/api/admin/upstox-settings', authenticateAdmin, (req, res) => {
-  const { admin_email, email_time } = req.body;
-  if (admin_email) { process.env.ADMIN_EMAIL = admin_email; updateEnvKey('ADMIN_EMAIL', admin_email); }
-  if (email_time)  { CONFIG.UPSTOX_EMAIL_TIME = email_time; updateEnvKey('UPSTOX_EMAIL_TIME', email_time); }
+  const { admin_email, email_time, otp_email, otp_email_pass } = req.body;
+  if (admin_email)    { process.env.ADMIN_EMAIL     = admin_email;    updateEnvKey('ADMIN_EMAIL',     admin_email); }
+  if (email_time)     { CONFIG.UPSTOX_EMAIL_TIME     = email_time;     updateEnvKey('UPSTOX_EMAIL_TIME', email_time); }
+  if (otp_email)      { process.env.OTP_EMAIL        = otp_email;      updateEnvKey('OTP_EMAIL',        otp_email); }
+  if (otp_email_pass) { process.env.OTP_EMAIL_PASS   = otp_email_pass; updateEnvKey('OTP_EMAIL_PASS',   otp_email_pass); }
   res.json({ success: true, message: 'Settings saved' });
 });
 
@@ -2669,24 +2842,23 @@ app.get("/admin", (req, res) => {
 
 // ============ UPSTOX AUTO TOKEN — Email OAuth ============
 
-// Reuse the existing OTP email transporter (simplifyoptionchain@gmail.com)
-const { transporter: _otpTransporter } = (() => {
+// Dynamic transporter — reads OTP_EMAIL / OTP_EMAIL_PASS from env at send time
+function _makeOtpTransporter() {
   const nodemailer = require('nodemailer');
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: 'simplifyoptionchain@gmail.com', pass: 'othahwvhporvufci' }
-  });
-  return { transporter };
-})();
+  const user = process.env.OTP_EMAIL      || 'simplifyoptionchain@gmail.com';
+  const pass = process.env.OTP_EMAIL_PASS || 'othahwvhporvufci';
+  return nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
+}
 
 async function sendEmail(subject, htmlBody) {
   if (!CONFIG.ADMIN_EMAIL) {
     console.log('📧 ADMIN_EMAIL not set — would have sent:', subject);
     return false;
   }
+  const senderEmail = process.env.OTP_EMAIL || 'simplifyoptionchain@gmail.com';
   try {
-    await _otpTransporter.sendMail({
-      from:    '"SOC.AI.IN" <simplifyoptionchain@gmail.com>',
+    await _makeOtpTransporter().sendMail({
+      from:    `"SOC.AI.IN" <${senderEmail}>`,
       to:      CONFIG.ADMIN_EMAIL,
       subject,
       html:    htmlBody
@@ -3057,7 +3229,7 @@ async function startServer() {
 
     // ── Crypto feed (Delta Exchange WebSocket) ────────────────────────────────
     const cryptoFeed = require('./crypto/cryptoFeed');
-    cryptoFeed.start();
+    // Auto-start disabled — start manually via POST /api/crypto/start
     app.get('/api/crypto/status',   (_req, res) => res.json(cryptoFeed.getStatus()));
     app.get('/api/crypto/symbols',  (_req, res) => res.json(cryptoFeed.getAvailable()));
     app.get('/api/crypto/live/:underlying/:expiry', (req, res) => {

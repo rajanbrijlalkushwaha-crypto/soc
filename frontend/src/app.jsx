@@ -13,6 +13,7 @@ import SplitPane from './components/Layout/SplitPane';
 
 // Lazy-loaded heavy components — only downloaded when first opened
 const LTPCalculator      = lazy(() => import('./components/Calculator/LTPCalculator'));
+const LTPPopup           = lazy(() => import('./components/Calculator/LTPPopup'));
 const ShiftingModal      = lazy(() => import('./components/Shifting/ShiftingModal'));
 const SpotChartModal     = lazy(() => import('./components/Chart/SpotChartModal'));
 const OIChartModal       = lazy(() => import('./components/Chart/OIChartModal'));
@@ -391,6 +392,7 @@ function AppContent() {
         <>
           <div className="watermark">SOC.AI.IN</div>
           <LTPCalculator />
+          <LTPPopup />
           <ShiftingModal />
           <SpotChartModal />
           <OIChartModal />
@@ -399,6 +401,7 @@ function AppContent() {
             <Topbar />
             <UISettings />
             <div id="mainContent" style={{ flex: 1, minHeight: 0, height: 'unset', padding: 0, overflow: 'hidden' }}>
+              {mode === 'chain' && <OptionChainTable />}
               {mode === 'split' && (
                 <SplitPane
                   defaultSplit={65}
@@ -422,6 +425,7 @@ function AppContent() {
         <UISettings />
         <div id="mainContent">
           <LTPCalculator />
+          <LTPPopup />
           <ShiftingModal />
           <SpotChartModal />
           <OIChartModal />

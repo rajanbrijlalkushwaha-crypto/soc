@@ -30,6 +30,13 @@ export default function HolidayListPanel() {
 
   const today = new Date().toISOString().split('T')[0];
 
+  // date string 2 days from now
+  const in2Days = new Date();
+  in2Days.setDate(in2Days.getDate() + 2);
+  const in2DaysStr = in2Days.toISOString().split('T')[0];
+
+  const upcomingCount = holidays.filter(h => h.date >= today).length;
+
   return (
     <div className="info-panel">
       <div className="info-panel-header">
@@ -42,7 +49,17 @@ export default function HolidayListPanel() {
             </div>
           )}
         </div>
-        <span className="info-panel-count">{holidays.length} holidays</span>
+        <div style={{ marginLeft:'auto', display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap' }}>
+          <span className="info-panel-count">{holidays.length} total</span>
+          <span className="info-panel-count info-panel-count-upcoming">{upcomingCount} upcoming</span>
+        </div>
+      </div>
+
+      {/* Legend */}
+      <div className="holiday-legend">
+        <span className="legend-item legend-alert">Today / Within 2 days</span>
+        <span className="legend-item legend-upcoming">Upcoming</span>
+        <span className="legend-item legend-past">Past</span>
       </div>
 
       <div className="info-panel-body">
@@ -56,29 +73,32 @@ export default function HolidayListPanel() {
           <table className="info-table">
             <thead>
               <tr>
-                <th>#</th>
-                <th>Date</th>
-                <th>Day</th>
-                <th>Holiday</th>
-                <th>Closed Exchanges</th>
+                <th className="th-num">#</th>
+                <th className="th-date">Date</th>
+                <th className="th-day">Day</th>
+                <th className="th-name">Holiday</th>
+                <th className="th-ex">Exchanges</th>
               </tr>
             </thead>
             <tbody>
               {holidays.map((h, i) => {
-                const d      = new Date(h.date);
-                const isPast = h.date < today;
-                const isToday = h.date === today;
+                const d        = new Date(h.date);
+                const isPast   = h.date < today;
+                const isToday  = h.date === today;
+                const isSoon   = !isPast && !isToday && h.date <= in2DaysStr;
+                const rowClass = isToday ? 'row-today'
+                               : isSoon  ? 'row-soon'
+                               : isPast  ? 'row-past'
+                               :           'row-upcoming';
                 return (
-                  <tr
-                    key={i}
-                    className={isToday ? 'row-today' : isPast ? 'row-past' : ''}
-                  >
-                    <td>{i + 1}</td>
+                  <tr key={i} className={rowClass}>
+                    <td className="td-num">{i + 1}</td>
                     <td className="td-date">
                       {d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                       {isToday && <span className="badge-today">TODAY</span>}
+                      {isSoon  && <span className="badge-soon">SOON</span>}
                     </td>
-                    <td>{d.toLocaleDateString('en-IN', { weekday: 'short' })}</td>
+                    <td className="td-day">{d.toLocaleDateString('en-IN', { weekday: 'short' })}</td>
                     <td className="td-name">{h.description}</td>
                     <td className="td-exchanges">
                       {(h.closed_exchanges || []).map((ex, j) => (

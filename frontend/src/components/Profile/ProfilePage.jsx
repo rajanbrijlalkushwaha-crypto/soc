@@ -38,6 +38,7 @@ const UI_TOGGLES = [
   { label: 'LTP Display',    key: 'ltpDisplayActive',    action: 'TOGGLE_LTP_DISPLAY' },
   { label: 'Volume',         key: 'volumeDisplayActive', action: 'TOGGLE_VOLUME' },
   { label: 'OI Display',     key: 'oiDisplayActive',     action: 'TOGGLE_OI' },
+  { label: 'Vol/OI Chng',   key: 'volOiCngActive',      action: 'TOGGLE_VOLOICHNG_DISPLAY' },
   { label: 'MMI Display',    key: 'mmiDisplayActive',    action: 'TOGGLE_MMI' },
   { label: 'Reverse Table',  key: 'tableReversed',       action: 'TOGGLE_REVERSE' },
   { label: 'LTP Calculator', key: 'ltpCalcActive',       action: 'TOGGLE_LTP_CALC' },

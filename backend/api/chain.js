@@ -1492,6 +1492,28 @@ app.get("/api/symbols", (req, res) => {
     }
   });
 
+  // API: Get pre-computed PCR chart data
+  app.get("/api/chart/pcr/:symbol/:expiry/:date", (req, res) => {
+    try {
+      const { symbol, expiry, date } = req.params;
+      const safeSymbol = resolveSymbol(symbol);
+      const datePath = path.join(PATHS.MARKET, safeSymbol, expiry, date);
+      const chartFile = path.join(datePath, "_chart_pcr.json");
+
+      if (!fs.existsSync(chartFile) && fs.existsSync(datePath)) {
+        generatePCRChartData(datePath, symbol, expiry, date);
+      }
+
+      if (fs.existsSync(chartFile)) {
+        res.json(JSON.parse(fs.readFileSync(chartFile, 'utf8')));
+      } else {
+        res.status(404).json({ error: "PCR chart data not available" });
+      }
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // API: Get pre-computed Strategy 4.0 data
   app.get("/api/chart/strategy40/:symbol/:expiry/:date", (req, res) => {
     try {
@@ -1793,6 +1815,50 @@ function generateOIChngChartData(datePath, symbol, expiry, date) {
   }
 }
 
+// ── PCR Chart Data ────────────────────────────────────────────────────────────
+// Reads every snapshot, computes total Put OI / total Call OI per snapshot,
+// stores as time-series in _chart_pcr.json.  Each entry is saved at most every
+// 3 minutes (deduplicated by HH:MM rounded to 3-min bucket).
+function generatePCRChartData(datePath, symbol, expiry, date) {
+  try {
+    const jsonFiles = getDataFiles(datePath).sort();
+    if (jsonFiles.length === 0) return null;
+
+    const seen = new Set();
+    const chartData = { symbol, expiry, date, generated_at: new Date().toISOString(), data: [] };
+
+    for (const file of jsonFiles) {
+      try {
+        const filePath = path.join(datePath, file);
+        const data = readOptionChainFile(filePath);
+        if (!data.option_chain || data.option_chain.length === 0) continue;
+
+        let timeStr = (data.metadata?.time_hhmmss || parseTimeFromFilename(file)).substring(0, 5); // HH:MM
+        // Round down to nearest 3-min bucket
+        const [hh, mm] = timeStr.split(':').map(Number);
+        const bucket = `${String(hh).padStart(2,'0')}:${String(Math.floor(mm / 3) * 3).padStart(2,'0')}`;
+        if (seen.has(bucket)) continue;
+        seen.add(bucket);
+
+        let totalCallOI = 0, totalPutOI = 0;
+        data.option_chain.forEach(row => {
+          totalCallOI += row.call_options?.market_data?.oi || 0;
+          totalPutOI  += row.put_options?.market_data?.oi  || 0;
+        });
+
+        const pcr = totalCallOI > 0 ? parseFloat((totalPutOI / totalCallOI).toFixed(3)) : null;
+        if (pcr !== null) chartData.data.push({ time: bucket, pcr, call_oi: totalCallOI, put_oi: totalPutOI });
+      } catch (e) {}
+    }
+
+    chartData.data.sort((a, b) => a.time.localeCompare(b.time));
+    fs.writeFileSync(path.join(datePath, '_chart_pcr.json'), JSON.stringify(chartData));
+    return chartData;
+  } catch (error) {
+    return null;
+  }
+}
+
 function generateSpotChartData(datePath, symbol, expiry, date) {
   try {
     const jsonFiles = getDataFiles(datePath).sort();
@@ -1877,29 +1943,33 @@ function generateStrategy40Data(datePath, symbol, expiry, date) {
       return isNaN(rev) ? null : Math.round(rev);
     };
 
-    // Support: scan TOP → DOWN, first strike where putOI > callOI
+    // Support: start 2 strikes ABOVE spot, scan HIGH → LOW, first strike where putOI > callOI
+    const supStartIdx = Math.min(sorted.length - 1, atmIdx + 2);
     let supIdx = -1, maxPutOI = 0;
-    for (let i = sorted.length - 1; i >= 0; i--) {
+    for (let i = supStartIdx; i >= 0; i--) {
       const c = sorted[i].call_options?.market_data?.oi || 0;
       const p = sorted[i].put_options?.market_data?.oi  || 0;
       if (p > c) { supIdx = i; maxPutOI = p; break; }
     }
     if (supIdx === -1) {
-      for (let i = 0; i < sorted.length; i++) {
+      // Fallback: highest putOI in the same range
+      for (let i = supStartIdx; i >= 0; i--) {
         const p = sorted[i].put_options?.market_data?.oi || 0;
         if (p > maxPutOI) { maxPutOI = p; supIdx = i; }
       }
     }
 
-    // Resistance: scan BOTTOM → UP, first strike where callOI > putOI
+    // Resistance: start 2 strikes BELOW spot, scan LOW → HIGH, first strike where callOI > putOI
+    const resStartIdx = Math.max(0, atmIdx - 2);
     let resIdx = -1, maxCallOI = 0;
-    for (let i = 0; i < sorted.length; i++) {
+    for (let i = resStartIdx; i < sorted.length; i++) {
       const c = sorted[i].call_options?.market_data?.oi || 0;
       const p = sorted[i].put_options?.market_data?.oi  || 0;
       if (c > p) { resIdx = i; maxCallOI = c; break; }
     }
     if (resIdx === -1) {
-      for (let i = 0; i < sorted.length; i++) {
+      // Fallback: highest callOI in the same range
+      for (let i = resStartIdx; i < sorted.length; i++) {
         const c = sorted[i].call_options?.market_data?.oi || 0;
         if (c > maxCallOI) { maxCallOI = c; resIdx = i; }
       }
@@ -2527,6 +2597,7 @@ function generateAllChartData(symbol, expiry, date) {
   generateOIChartData(datePath, symbol, expiry, date);
   generateOIChngChartData(datePath, symbol, expiry, date);
   generateSpotChartData(datePath, symbol, expiry, date);
+  generatePCRChartData(datePath, symbol, expiry, date);
   generateShiftingData(datePath, symbol, expiry, date);
   generateMCTRData(datePath, symbol, expiry, date);
 
@@ -2556,6 +2627,7 @@ function autoGenerateMissingChartData() {
           !fs.existsSync(path.join(datePath, "_chart_oi.json")),
           !fs.existsSync(path.join(datePath, "_chart_oichng.json")),
           !fs.existsSync(path.join(datePath, "_chart_spot.json")),
+          !fs.existsSync(path.join(datePath, "_chart_pcr.json")),
           !fs.existsSync(path.join(datePath, "_chart_strategy40.json")),
           !fs.existsSync(path.join(datePath, "_shifting.json")),
           !fs.existsSync(path.join(datePath, "_mctr.json"))

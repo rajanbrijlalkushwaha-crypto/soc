@@ -411,6 +411,17 @@
             text-align: left !important;
         }
 
+        /* Thin visible border for option chain table */
+        #optionTable th, #optionTable td {
+            border: 1px solid #000;
+        }
+        .black-theme #optionTable th, .black-theme #optionTable td {
+            border: 1px solid #555;
+        }
+        .blue-theme #optionTable th, .blue-theme #optionTable td {
+            border: 1px solid #1a3a5c;
+        }
+
         /* TEXT SIZING */
         tbody td { font-size: 14px; font-weight: 500; }
         .ltp-val { 
@@ -465,8 +476,10 @@
         .hide-mmi .mmi-col { display: none; }
 
         /* HIGHLIGHT COLORS */
-        .top-max { background-color: var(--rank-max) !important; }
-        .top-high { background-color: var(--rank-high) !important; }
+        .top-max { background-color: var(--rank-max) !important; border: 1px solid #000 !important; }
+        .top-max > span:first-child { font-weight: 900 !important; font-size: 15px; color: #000 !important; }
+        .top-high { background-color: var(--rank-high) !important; border: 1px solid #000 !important; }
+        .top-high > span:first-child { font-weight: 900 !important; font-size: 15px; color: #000 !important; }
 
         /* OI CHANGE COLORS */
         .oi-change-positive { color: #2e7d32 !important; }
@@ -677,8 +690,8 @@
         .put-sub { background: #ffcdd2; color: #b71c1c; }
         .strike-sub { background: #ed9231dc; color: #040404; font-weight: bold; }
         
-        .itm-bg { background-color: var(--itm-grey) !important; }
-        .strike-col { font-weight: bold; background: #f18713 !important; color: #0b0a0a; font-size: 17px; border-radius: 8px; position: relative; overflow: visible; }
+        .itm-bg { background-color: var(--itm-grey) !important; border: 1px solid #000 !important; }
+        .strike-col { font-weight: bold; background: #f18713 !important; color: #0b0a0a; font-size: 17px; border-radius: 0; position: relative; overflow: visible; }
 
         /* SPOT ROW STYLES - ADDED */
         .spot-row td { 
@@ -742,6 +755,47 @@
             font-size: 16px;
             font-weight: bold;
         }
+
+        /* Spot change diff */
+        .spot-diff {
+            font-size: 10px;
+            font-weight: 800;
+            line-height: 1.2;
+            padding: 0 2px;
+        }
+        .spot-diff-up   { color: #a5d6a7; }
+        .spot-diff-down { color: #ef9a9a; }
+
+        /* Futures row inside spot-box */
+        .spot-futures {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 2px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .spot-futures-label {
+            font-size: 9px;
+            font-weight: 900;
+            background: #e65100;
+            color: #fff;
+            padding: 0 4px;
+            border-radius: 2px;
+            letter-spacing: 0.3px;
+        }
+        .spot-futures-ltp {
+            font-size: 13px;
+            font-weight: 800;
+            color: #fff;
+        }
+        .spot-futures-diff {
+            font-size: 10px;
+            font-weight: 700;
+        }
+
+        /* Spot-box grows to fit futures row */
+        .spot-box { height: auto !important; min-height: 40px; padding: 4px 6px; }
 
         /* SPOT ROW — Volume bullish/bearish label */
         .spot-vol-cell {
@@ -855,6 +909,75 @@
             color: #aaa;
             font-size: 11px;
         }
+
+        /* ── S Level interactive cells ── */
+        .slevel-clickable {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+        }
+        /* Hover instruction message via ::after */
+        .slevel-clickable::after {
+            content: 'Click to select  •  Double-click to target';
+            position: absolute;
+            bottom: calc(100% + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            font-size: 11px;
+            font-weight: 800;
+            padding: 4px 10px;
+            border-radius: 5px;
+            pointer-events: none;
+            opacity: 0;
+            z-index: 9999;
+        }
+        .slevel-clickable:hover::after {
+            opacity: 1;
+        }
+        /* Call side → red background */
+        .slevel-call::after {
+            background: #d32f2f;
+            color: #fff;
+        }
+        /* Put side → green background */
+        .slevel-put::after {
+            background: #2e7d32;
+            color: #fff;
+        }
+        /* OI-dominant strike stars */
+        .slevel-oi-star {
+            font-size: 13px;
+            line-height: 1;
+            margin-left: 3px;
+            vertical-align: middle;
+        }
+        .slevel-oi-star-red   { color: #f44336; }
+        .slevel-oi-star-green { color: #4caf50; }
+
+        /* Selected (pinned) source cell */
+        .slevel-selected {
+            background: rgba(255, 111, 0, 0.18) !important;
+            box-shadow: inset 0 0 0 2px #ff6f00;
+            border-radius: 3px;
+        }
+        .slevel-selected .slevel-val {
+            color: #e65100 !important;
+            font-weight: 900 !important;
+        }
+        .slevel-pin {
+            font-size: 9px;
+            position: absolute;
+            top: 2px;
+            right: 3px;
+            line-height: 1;
+        }
+        .slevel-val  { font-size: 17px; font-weight: bold; display: block; }
+        .slevel-ltp  { font-size: 17px; font-weight: bold; display: block; color: #444; }
+        .slevel-na   { font-size: 17px; font-weight: bold; display: block; color: #bbb; }
+        .show-greeks .slevel-val,
+        .show-greeks .slevel-ltp,
+        .show-greeks .slevel-na  { font-size: 15px; }
 
         /* REFRESH INDICATOR */
         .refresh-indicator {
@@ -1570,6 +1693,8 @@
         }
         .sixbox-bull .sixbox-tag { color: #2e7d32; }
         .sixbox-bear .sixbox-tag { color: #c62828; }
+        .sixbox-call .sixbox-tag { color: #f44336; }
+        .sixbox-put  .sixbox-tag { color: #4caf50; }
         .sixbox-val {
             font-size: 14px;
             font-weight: 800;
@@ -1585,21 +1710,32 @@
         .black-theme .sixbox-pct { color: #eee; }
         .blue-theme  .sixbox-pct { color: #0d1b2a; }
 
-        /* Animated arrow */
-        @keyframes arrow-bull {
-            0%,100% { transform: translateX(0);   opacity: 1; }
-            50%      { transform: translateX(-4px); opacity: 0.5; }
+        /* Animated arrows — bounce down (bullish) / bounce up (bearish) */
+        @keyframes arrow-down-bounce {
+            0%   { transform: translateY(0);    opacity: 1;   }
+            30%  { transform: translateY(6px);  opacity: 1;   }
+            55%  { transform: translateY(2px);  opacity: 0.7; }
+            75%  { transform: translateY(5px);  opacity: 1;   }
+            100% { transform: translateY(0);    opacity: 1;   }
         }
-        @keyframes arrow-bear {
-            0%,100% { transform: translateX(0);  opacity: 1; }
-            50%      { transform: translateX(4px); opacity: 0.5; }
+        @keyframes arrow-up-bounce {
+            0%   { transform: translateY(0);    opacity: 1;   }
+            30%  { transform: translateY(-6px); opacity: 1;   }
+            55%  { transform: translateY(-2px); opacity: 0.7; }
+            75%  { transform: translateY(-5px); opacity: 1;   }
+            100% { transform: translateY(0);    opacity: 1;   }
         }
         .sixbox-arrow {
             font-size: 18px;
             font-weight: 900;
             line-height: 1;
             flex-shrink: 0;
-            display: inline-block;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1px;
+            min-width: 44px;
         }
         .sixbox-arr-bull {
             color: #2e7d32;

@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useCallback, useRef } from 'react';
+import { createContext, useContext, useReducer, useRef } from 'react';
 
 const AppContext = createContext(null);
 
@@ -7,6 +7,13 @@ const initialState = {
   symbols: [],
   currentSymbol: '',
   currentSpot: 0,
+  spotPrevClose: 0,
+  spotChange: 0,
+  spotPctChange: 0,
+  futuresLtp: 0,
+  futuresPrevClose: 0,
+  futuresChange: 0,
+  futuresPctChange: 0,
   currentExpiry: '--',
   currentDataDate: '--',
   currentTime: '--',
@@ -16,13 +23,14 @@ const initialState = {
   // Toggles
   greeksActive: false,
   atmActive: true,
-  indicatorsActive: true,
+  indicatorsActive: false,
   ltpDisplayActive: true,
   volumeDisplayActive: true,
   oiDisplayActive: true,
   mmiDisplayActive: true,
   tableReversed: false,
   ltpCalcActive: false,
+  volOiCngActive: false,
 
   // Historical Mode
   historicalMode: false,
@@ -59,6 +67,7 @@ const initialState = {
 
   // LTP Calculator
   selectedOption: null,
+  ltpPopupOpen: false,
 
   // Shifting
   shiftingData: null,
@@ -118,9 +127,15 @@ const initialState = {
   volOiCngData: {},      // { 5: {strike: {callVol,callOI,putVol,putOI}}, 15: {...}, 30: {...} }
   volOiCngWindow: 5,     // active time window: 5 | 15 | 30
 
+  // Strong S/R reversal levels (drawn at reversal price, not strike)
+  strongSupport: null,       // reversal price: 2+ maxes on put side
+  strongResistance: null,    // reversal price: 2+ maxes on call side
+  strong2ndSupport: null,    // reversal price: 1 max+1 second, or 2 seconds on put side
+  strong2ndResistance: null, // reversal price: 1 max+1 second, or 2 seconds on call side
+
   // Split Screen
-  splitScreenActive: false,
-  splitScreenMode: 'off', // 'off' | 'split' | 'chart' | 'chain'
+  splitScreenActive: true,
+  splitScreenMode: 'split', // 'off' | 'split' | 'chart' | 'chain'
 
   // Loading
   loading: true,
@@ -139,17 +154,26 @@ function appReducer(state, action) {
         mctrSupport: null, mctrResistance: null,
         shiftingResistance: null, shiftingSupport: null, shiftingTimeline: [],
         strategy40Support: null, strategy40Resistance: null,
-        nextDayBromosR: null, nextDayBromosS: null };
+        nextDayBromosR: null, nextDayBromosS: null,
+        strongSupport: null, strongResistance: null,
+        strong2ndSupport: null, strong2ndResistance: null };
     case 'SET_LIVE_DATA':
       return {
         ...state,
         loading: false,
-        currentSpot: action.payload.spot_price || 0,
-        chainData: action.payload.chain || [],
-        currentExpiry: action.payload.expiry || '--',
-        currentDataDate: action.payload.date || '--',
-        currentTime: action.payload.time || '--',
-        lotSize: action.payload.lot_size || 1,
+        currentSpot:      action.payload.spot_price       || 0,
+        spotPrevClose:    action.payload.spot_prev_close   || 0,
+        spotChange:       action.payload.spot_change       || 0,
+        spotPctChange:    action.payload.spot_pct_change   || 0,
+        futuresLtp:       action.payload.futures_ltp       || 0,
+        futuresPrevClose: action.payload.futures_prev_close|| 0,
+        futuresChange:    action.payload.futures_change    || 0,
+        futuresPctChange: action.payload.futures_pct_change|| 0,
+        chainData:        action.payload.chain             || [],
+        currentExpiry:    action.payload.expiry            || '--',
+        currentDataDate:  action.payload.date              || '--',
+        currentTime:      action.payload.time              || '--',
+        lotSize:          action.payload.lot_size          || 1,
       };
     case 'SET_LOT_SIZE':
       return { ...state, lotSize: action.payload };
@@ -171,6 +195,8 @@ function appReducer(state, action) {
       return { ...state, oiDisplayActive: !state.oiDisplayActive };
     case 'TOGGLE_MMI':
       return { ...state, mmiDisplayActive: !state.mmiDisplayActive };
+    case 'TOGGLE_VOLOICHNG_DISPLAY':
+      return { ...state, volOiCngActive: !state.volOiCngActive };
     case 'TOGGLE_REVERSE':
       return { ...state, tableReversed: !state.tableReversed };
     case 'TOGGLE_LTP_CALC':
@@ -189,6 +215,10 @@ function appReducer(state, action) {
       return { ...state, signalsLoading: action.payload };
     case 'SET_SELECTED_OPTION':
       return { ...state, selectedOption: action.payload };
+    case 'OPEN_LTP_POPUP':
+      return { ...state, selectedOption: action.payload, ltpPopupOpen: true };
+    case 'CLOSE_LTP_POPUP':
+      return { ...state, ltpPopupOpen: false };
     case 'SET_SHIFTING_DATA':
       return { ...state, shiftingData: action.payload };
     case 'TOGGLE_SHIFTING_MODAL':
@@ -269,6 +299,17 @@ function appReducer(state, action) {
                  : 'off';
       return { ...state, splitScreenMode: next, splitScreenActive: next !== 'off' };
     }
+    case 'SET_SPLIT_MODE': {
+      const m = action.payload; // 'chain' | 'split' | 'chart'
+      return { ...state, splitScreenMode: m, splitScreenActive: true };
+    }
+    case 'SET_STRONG_SR':
+      return { ...state,
+        strongSupport:       action.payload.support,
+        strongResistance:    action.payload.resistance,
+        strong2ndSupport:    action.payload.support2nd,
+        strong2ndResistance: action.payload.resistance2nd,
+      };
     case 'TOGGLE_UI_MENU':
       return { ...state, uiMenuOpen: !state.uiMenuOpen };
     case 'SET_UI_MENU':
@@ -308,7 +349,7 @@ function appReducer(state, action) {
         ...state,
         greeksActive:       s.greeksActive       !== undefined ? s.greeksActive       : state.greeksActive,
         atmActive:          s.atmActive           !== undefined ? s.atmActive           : state.atmActive,
-        indicatorsActive:   s.indicatorsActive    !== undefined ? s.indicatorsActive    : state.indicatorsActive,
+        indicatorsActive:   false, // always off on load regardless of saved preference
         ltpDisplayActive:   s.ltpDisplayActive    !== undefined ? s.ltpDisplayActive    : state.ltpDisplayActive,
         volumeDisplayActive:s.volumeDisplayActive !== undefined ? s.volumeDisplayActive : state.volumeDisplayActive,
         oiDisplayActive:    s.oiDisplayActive     !== undefined ? s.oiDisplayActive     : state.oiDisplayActive,
@@ -316,6 +357,7 @@ function appReducer(state, action) {
         tableReversed:      s.tableReversed       !== undefined ? s.tableReversed       : state.tableReversed,
         ltpCalcActive:      s.ltpCalcActive       !== undefined ? s.ltpCalcActive       : state.ltpCalcActive,
         showInLakh:         s.showInLakh          !== undefined ? s.showInLakh          : state.showInLakh,
+        volOiCngActive:     s.volOiCngActive      !== undefined ? s.volOiCngActive      : state.volOiCngActive,
         theme:              s.theme               !== undefined ? s.theme               : state.theme,
       };
     }

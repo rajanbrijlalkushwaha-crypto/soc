@@ -1,14 +1,15 @@
 // emailService/emailService.js
 const nodemailer = require("nodemailer");
 
-// Email configuration
-const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-        user: "simplifyoptionchain@gmail.com",
-        pass: "othahwvhporvufci"  // Gmail App Password
-    }
-});
+// Returns a fresh transporter using current env vars (updated live from admin panel)
+function getTransporter() {
+    const user = process.env.OTP_EMAIL || "simplifyoptionchain@gmail.com";
+    const pass = process.env.OTP_EMAIL_PASS || "othahwvhporvufci";
+    return nodemailer.createTransport({ service: "gmail", auth: { user, pass } });
+}
+function getSenderEmail() {
+    return process.env.OTP_EMAIL || "simplifyoptionchain@gmail.com";
+}
 
 /**
  * Returns the public base URL for email links.
@@ -93,8 +94,8 @@ async function sendOTPEmail(req, email, otp) {
             </div>
         `;
 
-        await transporter.sendMail({
-            from: `"Simplify Option Chain" <simplifyoptionchain@gmail.com>`,
+        await getTransporter().sendMail({
+            from: `"Simplify Option Chain" <${getSenderEmail()}>`,
             to: email,
             subject: "Your OTP – Verify Email – Simplify Option Chain",
             html: html
@@ -168,8 +169,8 @@ async function sendVerificationEmail(req, email, token) {
             </div>
         `;
 
-        await transporter.sendMail({
-            from: `"Simplify Option Chain" <simplifyoptionchain@gmail.com>`,
+        await getTransporter().sendMail({
+            from: `"Simplify Option Chain" <${getSenderEmail()}>`,
             to: email,
             subject: "Verify Your Email – Simplify Option Chain",
             html: html
@@ -244,8 +245,8 @@ async function sendPasswordResetEmail(req, email, token) {
             </div>
         `;
 
-        await transporter.sendMail({
-            from: `"Simplify Option Chain" <simplifyoptionchain@gmail.com>`,
+        await getTransporter().sendMail({
+            from: `"Simplify Option Chain" <${getSenderEmail()}>`,
             to: email,
             subject: "Reset Your Password – Simplify Option Chain",
             html: html
@@ -265,7 +266,7 @@ async function sendPasswordResetEmail(req, email, token) {
 async function sendUpstoxAuthEmail(adminEmail, authUrl, appName = 'Upstox App') {
     try {
         const mailOptions = {
-            from: '"Simplify Option Chain" <simplifyoptionchain@gmail.com>',
+            from: `"Simplify Option Chain" <${getSenderEmail()}>`,
             to: adminEmail,
             subject: `🔑 Upstox Token — ${appName} — Action Required`,
             html: `
@@ -310,7 +311,7 @@ async function sendUpstoxAuthEmail(adminEmail, authUrl, appName = 'Upstox App') 
 </body>
 </html>`
         };
-        await transporter.sendMail(mailOptions);
+        await getTransporter().sendMail(mailOptions);
         return true;
     } catch (error) {
         console.error("❌ Error sending Upstox auth email:", error);
@@ -331,7 +332,7 @@ async function sendConsolidatedAuthEmail(adminEmail, slots, startAllUrl) {
     ).join('');
 
     const mailOptions = {
-        from: '"Simplify Option Chain" <simplifyoptionchain@gmail.com>',
+        from: `"Simplify Option Chain" <${getSenderEmail()}>`,
         to: adminEmail,
         subject: `🔑 Upstox Daily Token Renewal — ${slots.length} Apps`,
         html: `
@@ -376,7 +377,7 @@ async function sendConsolidatedAuthEmail(adminEmail, slots, startAllUrl) {
 </body>
 </html>`
     };
-    await transporter.sendMail(mailOptions);
+    await getTransporter().sendMail(mailOptions);
     return true;
 }
 
