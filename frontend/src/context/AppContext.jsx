@@ -105,6 +105,7 @@ const initialState = {
   joinMeetActive: false,
   cryptoPageActive: false,
   liveOCActive: false,
+  heatmapActive: false,
 
   // Notifications
   notifPanelOpen: false,
@@ -309,8 +310,12 @@ function appReducer(state, action) {
         : { ...state, cryptoPageActive: false };
     case 'SET_LIVE_OC':
       return action.payload
-        ? { ...state, liveOCActive: true, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        ? { ...state, liveOCActive: true, heatmapActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
         : { ...state, liveOCActive: false };
+    case 'SET_HEATMAP':
+      return action.payload
+        ? { ...state, heatmapActive: true, liveOCActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        : { ...state, heatmapActive: false };
     case 'SET_NOTIF_PANEL':
       return { ...state, notifPanelOpen: action.payload };
     case 'SET_NOTIF_UNREAD':

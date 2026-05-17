@@ -451,6 +451,9 @@ registerVolOiCngRoute(app);
 const subscriptionRouter = require('./api/subscription');
 app.use('/api/subscription', subscriptionRouter);
 
+// Stock Heatmap — Nifty 50 LTP via Upstox
+app.use('/api/heatmap', require('./api/heatmap'));
+
 // Power AI Stock filter
 require("./api/powerAiStock")(app);
 
