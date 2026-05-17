@@ -98,6 +98,7 @@ function diffSnapshot(prev, next) {
 
   // ── Top-level scalar fields ──────────────────────────────────────────────
   if (prev.spot_price !== next.spot_price) result.spot_price = next.spot_price;
+  if (prev.spot_vwap  !== next.spot_vwap)  result.spot_vwap  = next.spot_vwap;
   if (prev.time       !== next.time)       result.time       = next.time;
   if (prev.expiry     !== next.expiry)     result.expiry     = next.expiry;
   if (prev.date       !== next.date)       result.date       = next.date;

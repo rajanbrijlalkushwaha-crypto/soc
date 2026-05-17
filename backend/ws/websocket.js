@@ -74,6 +74,7 @@ async function loadLatestSnapshot(symbol) {
         date:               live.date               || '',
         time:               live.time               || '',
         spot_price:         live.spot_price         || 0,
+        spot_vwap:          live.spot_vwap          || 0,
         spot_prev_close:    live.spot_prev_close    || 0,
         spot_change:        live.spot_change        || 0,
         spot_pct_change:    live.spot_pct_change    || 0,

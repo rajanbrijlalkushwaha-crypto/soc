@@ -171,13 +171,20 @@ function processIndexTick(symbol, feed) {
   if (!_state[symbol]) return;
   const mf = feed.fullFeed?.marketFF;
   const lt = feed.ltpc;
-  let ltp = 0, cp = 0;
-  if (mf) { ltp = mf.ltpcLtp ?? mf.ltpc_ltp ?? 0; cp = mf.ltpcCp ?? mf.ltpc_cp ?? 0; }
-  else if (lt) { ltp = lt.ltp ?? 0; cp = lt.cp ?? 0; }
+  let ltp = 0, cp = 0, atp = 0;
+  if (mf) {
+    ltp = mf.ltpcLtp ?? mf.ltpc_ltp ?? 0;
+    cp  = mf.ltpcCp  ?? mf.ltpc_cp  ?? 0;
+    atp = mf.atp     ?? 0;
+  } else if (lt) {
+    ltp = lt.ltp ?? 0;
+    cp  = lt.cp  ?? 0;
+  }
   if (ltp > 0) {
     _state[symbol].spot     = ltp;
     _state[symbol].spot_chg = cp > 0 ? ltp - cp : 0;
   }
+  if (atp > 0) _state[symbol].spot_vwap = atp;
 }
 
 // ── Publish state to Redis ────────────────────────────────────────────────────
@@ -229,6 +236,7 @@ async function publishState(symbol) {
     date:               existing.date               || new Date().toISOString().split('T')[0],
     time:               getIstNow().split(' ')[1],
     spot_price:         st.spot                     || existing.spot_price        || 0,
+    spot_vwap:          st.spot_vwap                || existing.spot_vwap         || 0,
     spot_prev_close:    existing.spot_prev_close    || 0,
     spot_change:        st.spot_chg                 || existing.spot_change       || 0,
     spot_pct_change:    existing.spot_pct_change    || 0,
@@ -296,7 +304,7 @@ function registerInstruments({ symbol, indexKey, futuresKey, optionKeys, expiry 
   if (optionKeys) optionKeys.forEach(k => inst.optionKeys.add(k));
 
   if (!_state[symbol]) {
-    _state[symbol] = { spot: 0, spot_chg: 0, fut_ltp: 0, chain: {}, expiry: expiry || '' };
+    _state[symbol] = { spot: 0, spot_chg: 0, spot_vwap: 0, fut_ltp: 0, chain: {}, expiry: expiry || '' };
   } else if (expiry) {
     _state[symbol].expiry = expiry;
   }

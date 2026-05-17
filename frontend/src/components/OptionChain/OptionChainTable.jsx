@@ -22,7 +22,7 @@ export default function OptionChainTable() {
   }, [state.ltpPopupOpen]);
 
   const {
-    chainData, currentSpot, currentSymbol, greeksActive, atmActive,
+    chainData, currentSpot, spotVwap, currentSymbol, greeksActive, atmActive,
     indicatorsActive, ltpDisplayActive, volumeDisplayActive,
     oiDisplayActive, mmiDisplayActive, tableReversed, volOiCngActive,
     spotChange, spotPctChange, futuresLtp, futuresChange, futuresPctChange,
@@ -664,6 +664,14 @@ export default function OptionChainTable() {
                         {spotChange !== 0 && (
                           <span className={`spot-diff ${spotChange >= 0 ? 'spot-diff-up' : 'spot-diff-down'}`}>
                             {spotChange >= 0 ? '+' : ''}{spotChange.toFixed(2)} ({spotPctChange >= 0 ? '+' : ''}{spotPctChange.toFixed(2)}%)
+                          </span>
+                        )}
+                        {spotVwap > 0 && (
+                          <span className="spot-vwap">
+                            <span className="spot-vwap-label">VWAP</span>
+                            <span className={`spot-vwap-value ${currentSpot > spotVwap ? 'spot-diff-up' : currentSpot < spotVwap ? 'spot-diff-down' : ''}`}>
+                              {spotVwap.toFixed(2)}
+                            </span>
                           </span>
                         )}
                         {futuresLtp > 0 && (
