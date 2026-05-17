@@ -23,13 +23,15 @@ const session = require("express-session");
 require('dotenv').config({ path: path.join(__dirname, '..', 'data', '.env') });
 
 // ── MongoDB ───────────────────────────────────────────────────────────────────
-const { connectDB }    = require('./db/mongoose');
-const { connectAtlas } = require('./db/atlasMongoose');
-const { User }         = require('./db/models/User');
-// Connect local MongoDB (option-chain data) and Atlas (users/subs/sessions) in parallel
+const { connectDB }       = require('./db/mongoose');
+const { connectAtlas }    = require('./db/atlasMongoose');
+const { connectSocuptick } = require('./db/socuptickMongoose');
+const { User }            = require('./db/models/User');
+// Connect all three databases in parallel
 Promise.all([
   connectDB().catch(err => console.error('[MongoDB] Startup connect failed:', err.message)),
   connectAtlas().catch(err => console.error('[Atlas] Startup connect failed:', err.message)),
+  connectSocuptick().catch(err => console.error('[socuptick] Startup connect failed:', err.message)),
 ]);
 
 // ── Centralized path config ───────────────────────────────────────────────────
