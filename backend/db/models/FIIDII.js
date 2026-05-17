@@ -1,7 +1,7 @@
 'use strict';
-const { socuptickConn } = require('../socuptickMongoose');
+const { mongoose } = require('../mongoose');
 
-const fiiDiiSchema = new socuptickConn.base.Schema({
+const fiiDiiSchema = new mongoose.Schema({
   date:      { type: String, required: true, unique: true }, // 'YYYY-MM-DD'
   fii_buy:   { type: Number, default: 0 },  // ₹ Crore (NSE_EQ|CASH)
   fii_sell:  { type: Number, default: 0 },
@@ -14,6 +14,6 @@ const fiiDiiSchema = new socuptickConn.base.Schema({
 
 fiiDiiSchema.index({ date: -1 });
 
-// Use socuptick connection — saves to "socuptick" database, "fiidiis" collection
-const FIIDII = socuptickConn.models.FIIDII || socuptickConn.model('FIIDII', fiiDiiSchema);
+// Saves to local MongoDB → socupstock database → fiidiis collection
+const FIIDII = mongoose.models.FIIDII || mongoose.model('FIIDII', fiiDiiSchema);
 module.exports = { FIIDII };
