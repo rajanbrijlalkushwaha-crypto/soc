@@ -184,7 +184,15 @@ function processIndexTick(symbol, feed) {
     _state[symbol].spot     = ltp;
     _state[symbol].spot_chg = cp > 0 ? ltp - cp : 0;
   }
-  if (atp > 0) _state[symbol].spot_vwap = atp;
+  // atp from feed works for equity; for indices use candle-based VWAP
+  if (atp > 0) {
+    _state[symbol].spot_vwap = atp;
+  } else {
+    try {
+      const vwap = require('../api/upstoxFeed').getVwap(symbol);
+      if (vwap > 0) _state[symbol].spot_vwap = vwap;
+    } catch (_) {}
+  }
 }
 
 // ── Publish state to Redis ────────────────────────────────────────────────────
@@ -236,7 +244,7 @@ async function publishState(symbol) {
     date:               existing.date               || new Date().toISOString().split('T')[0],
     time:               getIstNow().split(' ')[1],
     spot_price:         st.spot                     || existing.spot_price        || 0,
-    spot_vwap:          st.spot_vwap                || existing.spot_vwap         || 0,
+    spot_vwap:          st.spot_vwap                || existing.spot_vwap         || (() => { try { return require('../api/upstoxFeed').getVwap(symbol) || 0; } catch(_) { return 0; } })(),
     spot_prev_close:    existing.spot_prev_close    || 0,
     spot_change:        st.spot_chg                 || existing.spot_change       || 0,
     spot_pct_change:    existing.spot_pct_change    || 0,

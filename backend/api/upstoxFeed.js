@@ -631,3 +631,15 @@ module.exports = function(app, httpServer, CONFIG) {
 
 module.exports.getCandles  = getCandles;
 module.exports.processTick = processTick;
+
+// VWAP from 1-min candles using typical price (H+L+C)/3
+// For indices there is no volume data, so equal-weight average is used.
+module.exports.getVwap = function getVwap(symbol) {
+  const store = candleStore[symbol]?.[1];
+  if (!store) return 0;
+  const candles = [...store.candles];
+  if (store.current) candles.push(store.current);
+  if (!candles.length) return 0;
+  const sum = candles.reduce((s, c) => s + (c.high + c.low + c.close) / 3, 0);
+  return Math.round((sum / candles.length) * 100) / 100;
+};
