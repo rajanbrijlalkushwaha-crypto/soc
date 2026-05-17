@@ -28,20 +28,41 @@ function generateOTP() {
 // ================================
 // CHECK SESSION
 // ================================
-router.get('/check-session', (req, res) => {
-    if (req.session && req.session.userId && req.session.userVerified) {
-        res.json({
-            authenticated: true,
-            user: {
-                id:    req.session.userId,
-                name:  req.session.userName,
-                email: req.session.userEmail,
-                role:  req.session.userRole || 'user',
-            }
-        });
-    } else {
-        res.json({ authenticated: false });
+router.get('/check-session', async (req, res) => {
+    if (!(req.session && req.session.userId && req.session.userVerified)) {
+        return res.json({ authenticated: false });
     }
+
+    const uid = req.session.userId;
+
+    // 1. Check in-memory cache first (fast path)
+    let activeId = sesCache.get(uid);
+
+    // 2. Cache miss — fall back to Atlas DB
+    if (!activeId) {
+        try {
+            const { User } = require('../db/models/User');
+            const userDoc = await User.findOne({ userId: uid }, 'activeSessionId').lean();
+            activeId = userDoc?.activeSessionId;
+            if (activeId) sesCache.set(uid, activeId); // warm cache
+        } catch (_) {}
+    }
+
+    // 3. If a different session is active — kick this one out
+    if (activeId && activeId !== req.sessionID) {
+        req.session.destroy(() => {});
+        return res.status(401).json({ code: 'SESSION_INVALIDATED', message: 'Logged in on another device' });
+    }
+
+    res.json({
+        authenticated: true,
+        user: {
+            id:    req.session.userId,
+            name:  req.session.userName,
+            email: req.session.userEmail,
+            role:  req.session.userRole || 'user',
+        }
+    });
 });
 
 // ================================
@@ -301,8 +322,8 @@ router.post('/signin', async (req, res) => {
             return res.status(400).json({ error: 'Invalid email or password' });
         }
 
-        // Kick old session immediately, then fire-and-forget the audit write
-        sesCache.del(user.userId);
+        // Register new active session — old device gets kicked on next check-session
+        sesCache.set(user.userId, req.sessionID);
         User.findOneAndUpdate(
             { userId: user.userId },
             {
