@@ -33,6 +33,7 @@ const AITrainPanel       = lazy(() => import('./components/AITrain/AITrainPanel'
 const AIStockPanel       = lazy(() => import('./components/AIStock/AIStockPanel'));
 const JoinMeetPage       = lazy(() => import('./components/JoinMeet/JoinMeetPage'));
 const LiveOCPage         = lazy(() => import('./components/LiveOC/LiveOCPage'));
+const HeatmapPage        = lazy(() => import('./components/Heatmap/HeatmapPage'));
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -71,6 +72,8 @@ function AppContent() {
       dispatch({ type: 'SET_JOIN_MEET', payload: true });
     } else if (path === '/live-oc') {
       dispatch({ type: 'SET_LIVE_OC', payload: true });
+    } else if (path === '/heatmap') {
+      dispatch({ type: 'SET_HEATMAP', payload: true });
     } else if (path === '/optionchain') {
       dispatch({ type: 'SET_INDEX_PAGE', payload: false });
       dispatch({ type: 'SET_HISTORICAL_MODE', payload: false });
@@ -352,7 +355,8 @@ function AppContent() {
   useEffect(() => {
     const base = 'Soc.ai.in';
     let page = '';
-    if (state.liveOCActive)        page = 'Live OC';
+    if (state.heatmapActive)       page = 'Stock Heatmap';
+    else if (state.liveOCActive)   page = 'Live OC';
     else if (state.holidayListActive) page = 'Holiday List';
     else if (state.supportActive)  page = 'Support';
     else if (state.profileActive)  page = 'Profile';
@@ -369,7 +373,7 @@ function AppContent() {
     else page = 'Live Option Chain';
     document.title = `${base} | ${page}`;
   }, [
-    state.liveOCActive, state.holidayListActive, state.supportActive, state.profileActive,
+    state.heatmapActive, state.liveOCActive, state.holidayListActive, state.supportActive, state.profileActive,
     state.adminPanelActive, state.subscriptionActive, state.journalActive,
     state.teamPageActive, state.aiTrainActive, state.aiStockActive, state.aiPageActive,
     state.aiPageType, state.indexPageActive, state.historicalMode,
@@ -385,6 +389,7 @@ function AppContent() {
   })();
 
   const renderMain = () => {
+    if (state.heatmapActive)     return <HeatmapPage />;
     if (state.liveOCActive)      return <LiveOCPage />;
     if (state.joinMeetActive)    return <JoinMeetPage />;
     if (state.holidayListActive) return <HolidayListPanel />;
