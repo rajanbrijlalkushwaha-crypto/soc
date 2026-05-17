@@ -27,19 +27,15 @@ function loadRazorpay() {
 function fmtPrice(paise) {
   return `₹${(paise / 100).toLocaleString('en-IN')}`;
 }
-
 function fmtDate(d) {
-  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
+  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
-
 function daysLeft(endDate) {
   return Math.max(0, Math.ceil((new Date(endDate) - Date.now()) / 86400000));
 }
-
 function totalDays(startDate, endDate) {
   return Math.max(1, Math.round((new Date(endDate) - new Date(startDate)) / 86400000));
 }
-
 function progressPct(startDate, endDate) {
   const total = totalDays(startDate, endDate);
   const left  = daysLeft(endDate);
@@ -58,65 +54,55 @@ const DEFAULT_FEATURES = [
 ];
 
 const CATEGORIES = ['Regular', 'Advance', 'Courses'];
-const CAT_LABELS = { Regular: 'Regular Plans', Advance: 'Advance Plans', Courses: 'Courses' };
+const CAT_ICONS  = { Regular: '📊', Advance: '🚀', Courses: '🎓' };
 
 function PlanCard({ plan, isSelected, onSelect }) {
-  const perDay      = Math.round(plan.price / plan.durationDays);
-  const commPerDay  = plan.communityPrice ? Math.round(plan.communityPrice / plan.durationDays) : null;
-  const savings     = plan.communityPrice ? (plan.price - plan.communityPrice) : null;
-  const features    = plan.features?.length > 0 ? plan.features : DEFAULT_FEATURES;
+  const perDay     = Math.round(plan.price / plan.durationDays);
+  const commPerDay = plan.communityPrice ? Math.round(plan.communityPrice / plan.durationDays) : null;
+  const savings    = plan.communityPrice ? (plan.price - plan.communityPrice) : null;
+  const features   = plan.features?.length > 0 ? plan.features : DEFAULT_FEATURES;
+  const isPopular  = plan.badge === 'Most Popular';
 
   return (
     <div
-      className={`sp-plan-card${isSelected ? ' selected' : ''}${plan.badge ? ' has-badge' : ''}`}
+      className={`sp-plan-card${isSelected ? ' selected' : ''}${isPopular ? ' popular' : ''}`}
       onClick={() => onSelect(plan._id)}
     >
-      {plan.badge && <div className="sp-plan-badge">{plan.badge}</div>}
+      {plan.badge && (
+        <div className="sp-plan-badge">{plan.badge}</div>
+      )}
 
-      <div className="sp-plan-name">{plan.name}</div>
-      <div className="sp-plan-subtitle">
-        Starting from {fmtPrice(perDay)}/day · {plan.durationDays} days
-        {commPerDay ? ' (Non-Community)' : ''}
+      <div className="sp-plan-header">
+        <div className="sp-plan-name">{plan.name}</div>
+        <div className="sp-plan-duration">{plan.durationDays} days access</div>
       </div>
 
-      <table className="sp-pricing-table">
-        <thead>
-          <tr>
-            <th>Plan Type</th>
-            <th>Per Day</th>
-            <th>Total Price</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Non-Community</td>
-            <td>{fmtPrice(perDay)}</td>
-            <td className="sp-price-total">{fmtPrice(plan.price)}</td>
-          </tr>
-          {plan.communityPrice && commPerDay && (
-            <tr className="sp-community-row">
-              <td>Community</td>
-              <td>{fmtPrice(commPerDay)}</td>
-              <td className="sp-price-total community">{fmtPrice(plan.communityPrice)}</td>
-            </tr>
-          )}
-          {savings && (
-            <tr className="sp-savings-row">
-              <td>You Save</td>
-              <td>—</td>
-              <td className="sp-savings-amt">{fmtPrice(savings)}</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      <div className="sp-plan-price-block">
+        <div className="sp-plan-price-main">
+          <span className="sp-price-currency">₹</span>
+          <span className="sp-price-amount">{(plan.price / 100).toLocaleString('en-IN')}</span>
+        </div>
+        <div className="sp-price-perday">₹{perDay}/day</div>
+      </div>
+
+      {plan.communityPrice && commPerDay && (
+        <div className="sp-community-price">
+          <span className="sp-community-label">Community Price</span>
+          <span className="sp-community-val">{fmtPrice(plan.communityPrice)}</span>
+          <span className="sp-community-save">Save {fmtPrice(savings)}</span>
+        </div>
+      )}
 
       <ul className="sp-features">
-        {features.map((f, i) => (
+        {features.slice(0, 6).map((f, i) => (
           <li key={i}>
             <span className="sp-feat-check">✓</span>
-            {f}
+            <span>{f}</span>
           </li>
         ))}
+        {features.length > 6 && (
+          <li className="sp-feat-more">+{features.length - 6} more features</li>
+        )}
       </ul>
 
       <button
@@ -124,7 +110,7 @@ function PlanCard({ plan, isSelected, onSelect }) {
         onClick={e => { e.stopPropagation(); onSelect(plan._id); }}
         type="button"
       >
-        {isSelected ? '✓ Selected' : 'Select Plan'}
+        {isSelected ? '✓ Plan Selected' : 'Choose Plan'}
       </button>
     </div>
   );
@@ -168,17 +154,8 @@ export default function SubscriptionPage() {
   }, []);
 
   const handleRemoveCoupon = () => { setCoupon(''); setCouponData(null); setCouponErr(''); };
-
-  const handleSelectPlan = (planId) => {
-    setSelected(planId);
-    handleRemoveCoupon();
-  };
-
-  const handleTabChange = (cat) => {
-    setActiveTab(cat);
-    setSelected(null);
-    handleRemoveCoupon();
-  };
+  const handleSelectPlan   = (planId) => { setSelected(planId); handleRemoveCoupon(); };
+  const handleTabChange    = (cat) => { setActiveTab(cat); setSelected(null); handleRemoveCoupon(); };
 
   const tabPlans     = plans.filter(p => (p.category || 'Regular') === activeTab);
   const selectedPlan = plans.find(p => p._id === selected);
@@ -193,8 +170,8 @@ export default function SubscriptionPage() {
         body: JSON.stringify({ code: coupon.trim(), planId: selected }),
       });
       const d = await r.json();
-      if (d.success) { setCouponData(d); }
-      else { setCouponErr(d.error || 'Invalid coupon'); }
+      if (d.success) setCouponData(d);
+      else setCouponErr(d.error || 'Invalid coupon');
     } catch { setCouponErr('Network error'); }
     setCouponLoading(false);
   };
@@ -206,7 +183,7 @@ export default function SubscriptionPage() {
   const handleSubscribe = async () => {
     if (!selected) return setMsg('Please select a plan.');
     const ok = await loadRazorpay();
-    if (!ok) return setMsg('Could not load payment gateway. Please check your internet.');
+    if (!ok) return setMsg('Could not load payment gateway.');
     setPaying(true); setMsg(''); setMsgType('');
 
     try {
@@ -228,11 +205,8 @@ export default function SubscriptionPage() {
         name:        'Simplify Option Chain',
         description: `${orderData.planName} Subscription`,
         order_id:    orderData.orderId,
-        prefill: {
-          name:  state.user?.name  || '',
-          email: state.user?.email || '',
-        },
-        theme: { color: '#ff6f00' },
+        prefill:     { name: state.user?.name || '', email: state.user?.email || '' },
+        theme:       { color: '#ff6f00' },
         handler: async (response) => {
           try {
             const vr = await fetch(`${API_BASE}/api/subscription/verify`, {
@@ -253,10 +227,9 @@ export default function SubscriptionPage() {
               if (sd.success) {
                 setStatus(sd);
                 if (sd.subscription) {
-                  const dl = daysLeft(sd.subscription.endDate);
                   dispatch({ type: 'SET_SUBSCRIPTION', payload: {
                     active: true, planName: sd.subscription.planName,
-                    endDate: sd.subscription.endDate, daysLeft: dl,
+                    endDate: sd.subscription.endDate, daysLeft: daysLeft(sd.subscription.endDate),
                   }});
                 }
               }
@@ -284,93 +257,107 @@ export default function SubscriptionPage() {
   const dl          = activeSub ? daysLeft(activeSub.endDate) : 0;
   const pct         = activeSub ? progressPct(activeSub.startDate, activeSub.endDate) : 0;
   const subExpiring = activeSub && dl <= 10;
-  const barColor    = pct > 30 ? '#2e7d32' : pct > 10 ? '#e65100' : '#b71c1c';
+  const barColor    = pct > 30 ? '#22c55e' : pct > 10 ? '#f59e0b' : '#ef4444';
 
   return (
     <div className="sub-page">
 
       {/* ── Header ── */}
       <div className="sub-header">
-        <span className="sub-header-icon">💎</span>
-        <div>
-          <div className="sub-header-title">Subscription</div>
-          <div className="sub-header-sub">Plans &amp; Billing — Simplify Option Chain</div>
+        <div className="sub-header-left">
+          <div className="sub-header-icon">💎</div>
+          <div>
+            <div className="sub-header-title">Subscription Plans</div>
+            <div className="sub-header-sub">Simplify Option Chain · Real-time Market Intelligence</div>
+          </div>
         </div>
-        {state.user?.name && <div className="sub-header-user">{state.user.name}</div>}
+        {state.user?.name && (
+          <div className="sub-header-user">
+            <div className="sub-header-avatar">{state.user.name.charAt(0).toUpperCase()}</div>
+            <span>{state.user.name}</span>
+          </div>
+        )}
       </div>
 
       <div className="sub-body">
 
         {/* ── Admin / Member banner ── */}
         {isAdminOrMember && (
-          <div className="sub-active-banner admin">
-            <span className="sub-banner-icon">⭐</span>
-            <div>
-              <div className="sub-banner-title">Full Access — {userRole === 'admin' ? 'Admin' : 'Member'}</div>
-              <div className="sub-banner-sub">Your role grants unrestricted access to all features.</div>
+          <div className="sub-access-banner admin">
+            <div className="sub-access-icon">⭐</div>
+            <div className="sub-access-text">
+              <div className="sub-access-title">Full Access — {userRole === 'admin' ? 'Admin' : 'Member'}</div>
+              <div className="sub-access-sub">Your role grants unrestricted access to all features.</div>
             </div>
           </div>
         )}
 
-        {/* ── Active Subscription Detail Card ── */}
+        {/* ── Active Subscription Card ── */}
         {activeSub && !isAdminOrMember && (
-          <div className={`sub-sub-card${subExpiring ? ' expiring' : ''}`}>
-            <div className="sub-sub-card-toprow">
-              <div className="sub-sub-plan-name">{activeSub.planName}</div>
-              <span className={`sub-sub-badge${subExpiring ? ' expiring' : ''}`}>
-                {subExpiring ? '⚠️ Expiring Soon' : '✅ Active'}
+          <div className={`sub-active-card${subExpiring ? ' expiring' : ''}`}>
+            <div className="sub-active-top">
+              <div>
+                <div className="sub-active-plan">{activeSub.planName}</div>
+                <div className="sub-active-sub">Your current subscription</div>
+              </div>
+              <span className={`sub-active-badge${subExpiring ? ' expiring' : ''}`}>
+                {subExpiring ? '⚠ Expiring Soon' : '● Active'}
               </span>
             </div>
-            <div className="sub-sub-dates-row">
-              <div className="sub-sub-date-col">
-                <div className="sub-sub-date-label">Start Date</div>
-                <div className="sub-sub-date-value">{fmtDate(activeSub.startDate)}</div>
+            <div className="sub-active-dates">
+              <div className="sub-date-block">
+                <div className="sub-date-label">Started</div>
+                <div className="sub-date-val">{fmtDate(activeSub.startDate)}</div>
               </div>
-              <div className="sub-sub-date-arrow">→</div>
-              <div className="sub-sub-date-col">
-                <div className="sub-sub-date-label">End Date</div>
-                <div className="sub-sub-date-value">{fmtDate(activeSub.endDate)}</div>
+              <div className="sub-date-arrow">→</div>
+              <div className="sub-date-block">
+                <div className="sub-date-label">Expires</div>
+                <div className="sub-date-val">{fmtDate(activeSub.endDate)}</div>
               </div>
-              <div className="sub-sub-days-pill" style={{ background: subExpiring ? '#fff3e0' : '#e8f5e9', borderColor: subExpiring ? '#ffcc80' : '#a5d6a7' }}>
-                <div className="sub-sub-days-number" style={{ color: barColor }}>{dl}</div>
-                <div className="sub-sub-days-label">days left</div>
+              <div className="sub-days-pill" style={{ background: subExpiring ? '#fff7ed' : '#f0fdf4', borderColor: subExpiring ? '#fed7aa' : '#86efac' }}>
+                <div className="sub-days-num" style={{ color: barColor }}>{dl}</div>
+                <div className="sub-days-lbl">days left</div>
               </div>
             </div>
-            <div className="sub-sub-progress-track">
-              <div className="sub-sub-progress-fill" style={{ width: `${pct}%`, background: barColor }} />
-            </div>
-            <div className="sub-sub-progress-labels">
-              <span>Used</span>
-              <span>{pct}% remaining</span>
+            <div className="sub-progress-wrap">
+              <div className="sub-progress-track">
+                <div className="sub-progress-fill" style={{ width: `${pct}%`, background: barColor }} />
+              </div>
+              <div className="sub-progress-labels">
+                <span>0%</span>
+                <span style={{ color: barColor, fontWeight: 700 }}>{pct}% remaining</span>
+                <span>100%</span>
+              </div>
             </div>
           </div>
         )}
 
         {/* ── Alert ── */}
-        {msg && <div className={`sub-msg ${msgType}`}>{msg}</div>}
+        {msg && <div className={`sub-alert ${msgType}`}>{msg}</div>}
 
-        {/* ── Plans Section ── */}
-        <div className="sub-card">
+        {/* ── Plans ── */}
+        <div className="sub-plans-section">
 
-          {/* Category Tabs */}
+          {/* Tabs */}
           <div className="sp-tabs">
             {CATEGORIES.map(cat => (
               <button
                 key={cat}
-                className={`sp-tab-btn${activeTab === cat ? ' active' : ''}`}
+                className={`sp-tab${activeTab === cat ? ' active' : ''}`}
                 onClick={() => handleTabChange(cat)}
                 type="button"
               >
-                {CAT_LABELS[cat]}
+                <span>{CAT_ICONS[cat]}</span>
+                <span>{cat}</span>
               </button>
             ))}
           </div>
 
-          {/* Plan Cards */}
+          {/* Grid */}
           {tabPlans.length === 0 ? (
-            <div className="sp-no-plans">No plans available in this category.</div>
+            <div className="sp-empty">No plans available in this category.</div>
           ) : (
-            <div className="sp-plans-grid">
+            <div className="sp-grid">
               {tabPlans.map(plan => (
                 <PlanCard
                   key={plan._id}
@@ -382,23 +369,25 @@ export default function SubscriptionPage() {
             </div>
           )}
 
-          {/* Footer links */}
-          <div className="sp-footer-links">
-            <span>Shipping &amp; Delivery: <button className="sp-link-btn" onClick={() => setTermsOpen(true)}>View Details</button></span>
-            <span>|</span>
-            <span>Cancellation &amp; Refund: <button className="sp-link-btn" onClick={() => setTermsOpen(true)}>View Details</button></span>
+          <div className="sp-legal-links">
+            <button className="sp-legal-btn" onClick={() => setTermsOpen(true)}>Shipping &amp; Delivery</button>
+            <span className="sp-legal-sep">·</span>
+            <button className="sp-legal-btn" onClick={() => setTermsOpen(true)}>Cancellation &amp; Refund Policy</button>
           </div>
         </div>
 
         {/* ── Coupon ── */}
         {selectedPlan && (
           <div className="sub-card">
-            <div className="sub-card-title">Have a Coupon Code?</div>
+            <div className="sub-card-label">Coupon Code</div>
             {couponData ? (
               <div className="sub-coupon-applied">
-                <span className="sub-coupon-tag">🏷️ {couponData.coupon.code}</span>
-                <span className="sub-coupon-save">{couponData.message}</span>
-                <button className="sub-coupon-remove" onClick={handleRemoveCoupon}>✕ Remove</button>
+                <div className="sub-coupon-pill">
+                  <span className="sub-coupon-icon">🏷</span>
+                  <span className="sub-coupon-code">{couponData.coupon.code}</span>
+                  <span className="sub-coupon-msg">{couponData.message}</span>
+                </div>
+                <button className="sub-coupon-remove" onClick={handleRemoveCoupon}>Remove</button>
               </div>
             ) : (
               <div className="sub-coupon-row">
@@ -422,61 +411,69 @@ export default function SubscriptionPage() {
           </div>
         )}
 
-        {/* ── Order Summary + Pay ── */}
+        {/* ── Order Summary ── */}
         {selectedPlan && (
-          <div className="sub-card">
-            <div className="sub-card-title">Order Summary</div>
-            <div className="sub-summary-card">
-              <div className="sub-summary-row">
-                <span>Plan</span>
-                <span>{selectedPlan.name} ({selectedPlan.durationDays} days)</span>
+          <div className="sub-card sub-order-card">
+            <div className="sub-card-label">Order Summary</div>
+            <div className="sub-order-rows">
+              <div className="sub-order-row">
+                <span>{selectedPlan.name}</span>
+                <span>{selectedPlan.durationDays} days</span>
               </div>
-              <div className="sub-summary-row">
+              <div className="sub-order-row">
                 <span>Price</span>
                 <span>{fmtPrice(selectedPlan.price)}</span>
               </div>
               {couponData && (
-                <div className="sub-summary-row discount">
+                <div className="sub-order-row discount">
                   <span>Discount ({couponData.coupon.code})</span>
                   <span>− {fmtPrice(couponData.discountAmount)}</span>
                 </div>
               )}
-              <div className="sub-summary-row total">
-                <span>Total</span>
+              <div className="sub-order-row total">
+                <span>Total Payable</span>
                 <span>{fmtPrice(finalAmount)}</span>
               </div>
             </div>
+
             <button className="sub-pay-btn" onClick={handleSubscribe} disabled={paying}>
-              {paying ? '⏳ Processing...' : `Pay ${fmtPrice(finalAmount)} & Subscribe`}
+              {paying
+                ? <span className="sub-pay-loading">⏳ Processing...</span>
+                : <span>Pay {fmtPrice(finalAmount)} &amp; Activate</span>}
             </button>
-            <p className="sub-secure-note">🔒 Payments secured by Razorpay · UPI, Net Banking, Cards accepted</p>
+
+            <div className="sub-trust-row">
+              <span>🔒 Secured by Razorpay</span>
+              <span>·</span>
+              <span>UPI · Cards · Net Banking</span>
+            </div>
           </div>
         )}
 
         {/* ── Payment History ── */}
         {(() => {
-          const paidHistory = (status?.history || []).filter(
-            h => h.amountPaid > 0 && !h.planName?.toLowerCase().includes('trial')
-          );
-          return paidHistory.length > 0 ? (
-            <div className="sub-card" style={{ overflowX: 'auto' }}>
-              <div className="sub-card-title">Recharge History</div>
-              <table className="sub-history-table">
-                <thead>
-                  <tr><th>Plan</th><th>Amount</th><th>Start</th><th>End</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                  {paidHistory.map((h, i) => (
-                    <tr key={i}>
-                      <td>{h.planName}</td>
-                      <td>{fmtPrice(h.amountPaid)}</td>
-                      <td>{fmtDate(h.startDate)}</td>
-                      <td>{fmtDate(h.endDate)}</td>
-                      <td><span className={`sub-status-pill ${h.status}`}>{h.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          const hist = (status?.history || []).filter(h => h.amountPaid > 0 && !h.planName?.toLowerCase().includes('trial'));
+          return hist.length > 0 ? (
+            <div className="sub-card">
+              <div className="sub-card-label">Recharge History</div>
+              <div className="sub-history-wrap">
+                <table className="sub-history-table">
+                  <thead>
+                    <tr><th>Plan</th><th>Amount</th><th>Start</th><th>End</th><th>Status</th></tr>
+                  </thead>
+                  <tbody>
+                    {hist.map((h, i) => (
+                      <tr key={i}>
+                        <td>{h.planName}</td>
+                        <td>{fmtPrice(h.amountPaid)}</td>
+                        <td>{fmtDate(h.startDate)}</td>
+                        <td>{fmtDate(h.endDate)}</td>
+                        <td><span className={`sub-pill ${h.status}`}>{h.status}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : null;
         })()}
@@ -484,38 +481,33 @@ export default function SubscriptionPage() {
         {/* ── Terms ── */}
         <div className="sub-card">
           <button className="sub-terms-toggle" onClick={() => setTermsOpen(o => !o)}>
-            📋 Terms &amp; Conditions
-            <span className={`sub-terms-chevron${termsOpen ? ' open' : ''}`}>▼</span>
+            <span>📋 Terms &amp; Conditions</span>
+            <span className={`sub-chevron${termsOpen ? ' open' : ''}`}>▾</span>
           </button>
           {termsOpen && (
             <div className="sub-terms-body">
-              <h3>Subscription Terms &amp; Conditions</h3>
-              <p><strong>1. Subscription Plans:</strong> Simplify Option Chain offers various subscription plans with different durations. Access begins immediately upon successful payment.</p>
-              <p><strong>2. Payment:</strong> All payments are processed securely through Razorpay. We accept UPI, Net Banking, Credit/Debit Cards, and Wallets. Prices are inclusive of applicable taxes.</p>
-              <p><strong>3. Renewal:</strong> Subscriptions do not auto-renew. You must manually purchase a new plan when your current plan expires.</p>
-              <p><strong>4. Refund Policy:</strong> We offer a 24-hour refund window if the service was not accessible due to technical issues on our end. No refunds are issued for change of mind or partial usage after 24 hours of activation.</p>
-              <p><strong>5. Shipping &amp; Delivery:</strong> This is a digital subscription service. Access is granted instantly upon payment verification. No physical goods are shipped.</p>
-              <p><strong>6. Cancellation:</strong> You may request cancellation within 24 hours of purchase if the service was not accessible. After 24 hours, no cancellations are accepted.</p>
-              <p><strong>7. Coupon Codes:</strong> Coupon codes are single-use per order and cannot be combined with other offers. Coupons have validity periods and usage limits.</p>
-              <p><strong>8. Access After Expiry:</strong> Upon subscription expiry, access to Live Option Chain and real-time data will be revoked. Historical data remains accessible.</p>
-              <p><strong>9. Data Accuracy:</strong> Market data is sourced from NSE/BSE via Upstox APIs. Simplify Option Chain is not responsible for data delays, errors, or losses from trading decisions.</p>
-              <p><strong>10. Account:</strong> Subscriptions are non-transferable and tied to your registered account. Sharing credentials may result in account suspension.</p>
-              <p><strong>11. Contact:</strong> For billing support, email <a href="mailto:simplifyoptionchain@gmail.com">simplifyoptionchain@gmail.com</a> or reach us on Telegram <a href="https://t.me/simplifyoc" target="_blank" rel="noreferrer">@simplifyoc</a>.</p>
-              <p className="sub-terms-last">By subscribing, you agree to these terms and our Privacy Policy. Last updated: May 2026.</p>
+              <p><strong>1. Subscription Plans:</strong> Access begins immediately upon successful payment. Plans are non-transferable.</p>
+              <p><strong>2. Payment:</strong> Processed via Razorpay. Accepts UPI, Net Banking, Credit/Debit Cards, Wallets. Prices are inclusive of taxes.</p>
+              <p><strong>3. Renewal:</strong> Subscriptions do not auto-renew. Purchase a new plan when yours expires.</p>
+              <p><strong>4. Refund Policy:</strong> 24-hour refund window if the service was inaccessible due to technical issues on our end only.</p>
+              <p><strong>5. Delivery:</strong> Digital service — access granted instantly. No physical goods shipped.</p>
+              <p><strong>6. Cancellation:</strong> Within 24 hours of purchase only, if service was inaccessible.</p>
+              <p><strong>7. Coupon Codes:</strong> Single-use per order. Cannot be combined. Subject to validity and usage limits.</p>
+              <p><strong>8. Data Accuracy:</strong> Market data sourced via Upstox APIs. Not liable for data delays or trading losses.</p>
+              <p><strong>9. Contact:</strong> <a href="mailto:simplifyoptionchain@gmail.com">simplifyoptionchain@gmail.com</a> · <a href="https://t.me/simplifyoc" target="_blank" rel="noreferrer">Telegram @simplifyoc</a></p>
+              <p className="sub-terms-note">By subscribing you agree to these terms. Last updated: May 2026.</p>
             </div>
           )}
         </div>
 
-        {/* ── Contact ── */}
-        <div className="sub-card" style={{ border: '2px dashed #ff6f00', background: '#fffbf5' }}>
-          <div className="sub-card-title">Need Help or Have Questions?</div>
-          <p style={{ fontSize: 13, color: '#555', lineHeight: 1.7, marginBottom: 16 }}>
-            Contact us for manual activation, bulk plans, or any billing queries. We typically respond within 2 hours during market hours.
-          </p>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <a style={{ display: 'inline-block', padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 800, textDecoration: 'none', background: '#ff6f00', color: '#fff' }} href="mailto:simplifyoptionchain@gmail.com">📧 Email Us</a>
-            <a style={{ display: 'inline-block', padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 800, textDecoration: 'none', background: '#fff', color: '#333', border: '1.5px solid #ccc' }} href="https://t.me/simplifyoc" target="_blank" rel="noreferrer">✈️ Telegram</a>
-            <a style={{ display: 'inline-block', padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 800, textDecoration: 'none', background: '#fff', color: '#333', border: '1.5px solid #ccc' }} href="https://instagram.com/soc.ai.in" target="_blank" rel="noreferrer">📸 Instagram</a>
+        {/* ── Help ── */}
+        <div className="sub-help-card">
+          <div className="sub-help-title">Need Help?</div>
+          <div className="sub-help-sub">We typically respond within 2 hours during market hours.</div>
+          <div className="sub-help-btns">
+            <a className="sub-help-btn primary" href="mailto:simplifyoptionchain@gmail.com">📧 Email Us</a>
+            <a className="sub-help-btn" href="https://t.me/simplifyoc" target="_blank" rel="noreferrer">✈️ Telegram</a>
+            <a className="sub-help-btn" href="https://instagram.com/soc.ai.in" target="_blank" rel="noreferrer">📸 Instagram</a>
           </div>
         </div>
 

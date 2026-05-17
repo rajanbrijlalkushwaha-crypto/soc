@@ -6,7 +6,6 @@ node_modules/
 # Environment / secrets
 frontend/.env
 frontend/.env.local
-frontend/.env.production
 backend/.env
 data/.env
 .env
