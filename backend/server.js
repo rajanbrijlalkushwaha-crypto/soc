@@ -454,6 +454,11 @@ app.use('/api/subscription', subscriptionRouter);
 // Stock Heatmap — Nifty 50 LTP via Upstox
 app.use('/api/heatmap', require('./api/heatmap'));
 
+// FII / DII activity — daily data, saved in FIIDII collection
+const fiidiiRouter = require('./api/fiidii');
+app.use('/api/fiidii', fiidiiRouter);
+fiidiiRouter.scheduleDailyFetch(getActiveToken);
+
 // Power AI Stock filter
 require("./api/powerAiStock")(app);
 

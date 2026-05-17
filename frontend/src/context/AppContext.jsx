@@ -107,6 +107,7 @@ const initialState = {
   cryptoPageActive: false,
   liveOCActive: false,
   heatmapActive: false,
+  fiiDiiActive: false,
 
   // Notifications
   notifPanelOpen: false,
@@ -316,8 +317,12 @@ function appReducer(state, action) {
         : { ...state, liveOCActive: false };
     case 'SET_HEATMAP':
       return action.payload
-        ? { ...state, heatmapActive: true, liveOCActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        ? { ...state, heatmapActive: true, fiiDiiActive: false, liveOCActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
         : { ...state, heatmapActive: false };
+    case 'SET_FIIDII':
+      return action.payload
+        ? { ...state, fiiDiiActive: true, heatmapActive: false, liveOCActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        : { ...state, fiiDiiActive: false };
     case 'SET_NOTIF_PANEL':
       return { ...state, notifPanelOpen: action.payload };
     case 'SET_NOTIF_UNREAD':

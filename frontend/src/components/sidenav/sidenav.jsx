@@ -28,6 +28,7 @@ export default function SideNav() {
     { type: 'SET_TEAM_PAGE',       payload: false },
     { type: 'SET_SUBSCRIPTION_PAGE', payload: false },
     { type: 'SET_HEATMAP',           payload: false },
+    { type: 'SET_FIIDII',            payload: false },
   ];
 
   const goDashboard  = () => navigate('/dashboard',    [...RESET, { type: 'SET_INDEX_PAGE',      payload: true  }]);
@@ -46,6 +47,7 @@ export default function SideNav() {
   const goTeam         = () => navigate('/team',         [...RESET, { type: 'SET_TEAM_PAGE',         payload: true  }]);
   const goSubscription = () => navigate('/subscription', [...RESET, { type: 'SET_SUBSCRIPTION_PAGE', payload: true  }]);
   const goHeatmap      = () => navigate('/heatmap',      [...RESET, { type: 'SET_HEATMAP',           payload: true  }]);
+  const goFiiDii       = () => navigate('/fii-dii',      [...RESET, { type: 'SET_FIIDII',            payload: true  }]);
   const openNotif = () => dispatch({ type: 'SET_NOTIF_PANEL', payload: true });
 
   // ── Active state ─────────────────────────────────────────
@@ -67,6 +69,7 @@ export default function SideNav() {
   const isJoinMeet     = state.joinMeetActive;
   const isLiveOC       = state.liveOCActive;
   const isHeatmap      = state.heatmapActive;
+  const isFiiDii       = state.fiiDiiActive;
   const isAdminOrMember = userRole === 'admin' || userRole === 'member';
 
   // Check indicator access config — controls nav item visibility per role
@@ -83,6 +86,7 @@ export default function SideNav() {
       { icon: '⚡', label: 'Live OC (Ticks)',    tooltip: 'Live OC — tick-by-tick via WebSocket', active: isLiveOC, onClick: goLiveOC },
       { icon: '📅', label: 'Historical Data',    tooltip: 'Historical Data',   active: isHistorical, onClick: goHistorical },
       { icon: '🔥', label: 'Stock Heatmap',      tooltip: 'Nifty 50 Stock Heatmap', active: isHeatmap, onClick: goHeatmap },
+      { icon: '🏦', label: 'FII / DII',          tooltip: 'FII & DII Activity',      active: isFiiDii,  onClick: goFiiDii  },
     ]},
     { section: 'AI Tools', items: [
       { icon: '⚡', label: 'Power AI Stock', tooltip: 'Power AI Stock', active: isPowerAI, onClick: goPowerAI },

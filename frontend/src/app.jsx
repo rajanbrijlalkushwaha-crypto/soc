@@ -34,6 +34,7 @@ const AIStockPanel       = lazy(() => import('./components/AIStock/AIStockPanel'
 const JoinMeetPage       = lazy(() => import('./components/JoinMeet/JoinMeetPage'));
 const LiveOCPage         = lazy(() => import('./components/LiveOC/LiveOCPage'));
 const HeatmapPage        = lazy(() => import('./components/Heatmap/HeatmapPage'));
+const FIIDIIPage         = lazy(() => import('./components/FIIDII/FIIDIIPage'));
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -74,6 +75,8 @@ function AppContent() {
       dispatch({ type: 'SET_LIVE_OC', payload: true });
     } else if (path === '/heatmap') {
       dispatch({ type: 'SET_HEATMAP', payload: true });
+    } else if (path === '/fii-dii') {
+      dispatch({ type: 'SET_FIIDII', payload: true });
     } else if (path === '/optionchain') {
       dispatch({ type: 'SET_INDEX_PAGE', payload: false });
       dispatch({ type: 'SET_HISTORICAL_MODE', payload: false });
@@ -390,6 +393,7 @@ function AppContent() {
 
   const renderMain = () => {
     if (state.heatmapActive)     return <HeatmapPage />;
+    if (state.fiiDiiActive)      return <FIIDIIPage />;
     if (state.liveOCActive)      return <LiveOCPage />;
     if (state.joinMeetActive)    return <JoinMeetPage />;
     if (state.holidayListActive) return <HolidayListPanel />;
