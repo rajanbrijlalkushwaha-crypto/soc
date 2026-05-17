@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useOptionChainWS } from './hooks/useOptionChainWS';
 import { AppProvider, useApp } from './context/AppContext';
-import { fetchSymbols, fetchLiveData, fetchLiveSignals, fetchShiftingData, fetchMCTRData, fetchStrategy40Data } from './services/api';
+import { fetchSymbols, fetchLiveData, fetchLiveSignals, fetchShiftingData, fetchMCTRData, fetchStrategy40Data, fetchPrefetch } from './services/api';
 import IndexPage from './components/Index/IndexPage';
 import SideNav from './components/sidenav/sidenav';
 import Topbar from './components/Topbar/topbar';
@@ -32,8 +32,7 @@ const NotificationPanel  = lazy(() => import('./components/Notifications/Notific
 const AITrainPanel       = lazy(() => import('./components/AITrain/AITrainPanel'));
 const AIStockPanel       = lazy(() => import('./components/AIStock/AIStockPanel'));
 const JoinMeetPage       = lazy(() => import('./components/JoinMeet/JoinMeetPage'));
-const CryptoOptionChain    = lazy(() => import('./components/Crypto/CryptoOptionChain'));
-const CryptoOIChartModal   = lazy(() => import('./components/Crypto/CryptoOIChartModal'));
+const LiveOCPage         = lazy(() => import('./components/LiveOC/LiveOCPage'));
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -59,7 +58,7 @@ function AppContent() {
     } else if (path === '/admin-panel') {
       dispatch({ type: 'SET_ADMIN_PANEL', payload: true });
     } else if (path === '/subscription') {
-      dispatch({ type: 'SET_SUBSCRIPTION', payload: true });
+      dispatch({ type: 'SET_SUBSCRIPTION_PAGE', payload: true });
     } else if (path === '/journal') {
       dispatch({ type: 'SET_JOURNAL', payload: true });
     } else if (path === '/team') {
@@ -70,13 +69,15 @@ function AppContent() {
       dispatch({ type: 'SET_AI_STOCK', payload: true });
     } else if (path === '/join-meet') {
       dispatch({ type: 'SET_JOIN_MEET', payload: true });
-    } else if (path === '/crypto') {
-      dispatch({ type: 'SET_CRYPTO_PAGE', payload: true });
+    } else if (path === '/live-oc') {
+      dispatch({ type: 'SET_LIVE_OC', payload: true });
     } else if (path === '/optionchain') {
       dispatch({ type: 'SET_INDEX_PAGE', payload: false });
       dispatch({ type: 'SET_HISTORICAL_MODE', payload: false });
+    } else if (path === '/dashboard') {
+      dispatch({ type: 'SET_INDEX_PAGE', payload: true });
     }
-    // default (/dashboard or /) stays as indexPageActive:true
+    // default (/ or /optionchain or any unmatched path) shows option chain
   }, [dispatch]);
 
   // Bootstrap — load from localStorage instantly, then refresh from server
@@ -85,11 +86,12 @@ function AppContent() {
     try {
       const cached = localStorage.getItem('soc_bootstrap');
       if (cached) {
-        const { user, settings, indicators } = JSON.parse(cached);
-        if (user)       dispatch({ type: 'SET_USER',        payload: user });
+        const { user, settings, indicators, subscription } = JSON.parse(cached);
+        if (user)         dispatch({ type: 'SET_USER',         payload: user });
         if (settings && Object.keys(settings).length > 0)
-                        dispatch({ type: 'SET_UI_SETTINGS', payload: settings });
-        if (indicators) dispatch({ type: 'SET_INDICATORS',  payload: indicators });
+                          dispatch({ type: 'SET_UI_SETTINGS',  payload: settings });
+        if (indicators)   dispatch({ type: 'SET_INDICATORS',   payload: indicators });
+        if (subscription) dispatch({ type: 'SET_SUBSCRIPTION', payload: subscription });
       }
     } catch (_) {}
 
@@ -112,6 +114,10 @@ function AppContent() {
           dispatch({ type: 'SET_UI_SETTINGS', payload: boot.settings });
           toCache.settings = boot.settings;
         }
+        if (boot.subscription) {
+          dispatch({ type: 'SET_SUBSCRIPTION', payload: boot.subscription });
+          toCache.subscription = boot.subscription;
+        }
         if (boot.popup?.length > 0)
           dispatch({ type: 'SET_NOTIF_POPUP', payload: boot.popup });
         if (boot.unread > 0)
@@ -122,24 +128,41 @@ function AppContent() {
     });
   }, [dispatch]);
 
-  // Load symbols on mount — serve from localStorage instantly, then refresh from server
+  // Load symbols + first symbol's live data in ONE round trip (/api/prefetch)
+  // Previous approach: fetchSymbols() → wait → fetchLiveData() = 2 sequential RTTs
+  // Now: one combined call returns both simultaneously = 1 RTT
   useEffect(() => {
     const init = async () => {
       try {
-        // Fetch live symbols (active instruments only) for live option chain
-        const symbols = await fetchSymbols('live');
-        if (symbols.length > 0) {
-          localStorage.setItem('soc_symbols', JSON.stringify(symbols));
-          dispatch({ type: 'SET_SYMBOLS', payload: symbols });
-          dispatch({ type: 'SET_CURRENT_SYMBOL', payload: symbols[0] });
+        const { liveSymbols, allSymbols, liveData, firstSymbol } = await fetchPrefetch();
+
+        if (liveSymbols.length > 0) {
+          localStorage.setItem('soc_symbols', JSON.stringify(liveSymbols));
+          dispatch({ type: 'SET_SYMBOLS', payload: liveSymbols });
+          dispatch({ type: 'SET_CURRENT_SYMBOL', payload: firstSymbol || liveSymbols[0] });
         }
-        // Fetch all disk symbols for historical dropdown (includes deactivated instruments)
-        fetchSymbols('historical').then(all => {
-          if (all.length > 0) dispatch({ type: 'SET_AVAILABLE_SYMBOLS', payload: all });
-        }).catch(() => {});
+        if (allSymbols.length > 0) {
+          dispatch({ type: 'SET_AVAILABLE_SYMBOLS', payload: allSymbols });
+        }
+        // Seed live data immediately — user sees the table without a second round trip
+        if (liveData) {
+          dispatch({ type: 'SET_LIVE_DATA', payload: liveData });
+        }
       } catch (err) {
-        console.error('Error loading symbols:', err);
-        dispatch({ type: 'SET_ERROR', payload: err.message });
+        // Fallback to old two-step approach if prefetch fails
+        try {
+          const symbols = await fetchSymbols('live');
+          if (symbols.length > 0) {
+            localStorage.setItem('soc_symbols', JSON.stringify(symbols));
+            dispatch({ type: 'SET_SYMBOLS', payload: symbols });
+            dispatch({ type: 'SET_CURRENT_SYMBOL', payload: symbols[0] });
+          }
+          fetchSymbols('historical').then(all => {
+            if (all.length > 0) dispatch({ type: 'SET_AVAILABLE_SYMBOLS', payload: all });
+          }).catch(() => {});
+        } catch (e) {
+          dispatch({ type: 'SET_ERROR', payload: e.message });
+        }
       }
     };
     init();
@@ -166,28 +189,18 @@ function AppContent() {
   const wsFallbackRef = useRef(null);
   const wsDataReceivedRef = useRef(false);
 
-  // Push WS data into app state the moment it arrives + cache it locally
+  // Push WS data into app state the moment it arrives
   useEffect(() => {
     if (!wsData) return;
     wsDataReceivedRef.current = true;
     dispatch({ type: 'SET_LIVE_DATA', payload: wsData });
-    // Cache snapshot so next visit / symbol switch is instant
-    if (wsData.symbol) {
-      try { localStorage.setItem(`soc_live_${wsData.symbol}`, JSON.stringify(wsData)); } catch (_) {}
-    }
   }, [wsData, dispatch]);
 
-  // On symbol change: show cached snapshot INSTANTLY (0ms), then WS/API takes over
+  // On symbol change: fetch from server, WS FULL takes over when it arrives
   useEffect(() => {
     if (!state.currentSymbol || state.historicalMode) return;
     wsDataReceivedRef.current = false;
     clearInterval(wsFallbackRef.current);
-
-    // Show last known snapshot immediately — user sees data before network round-trip
-    try {
-      const cached = localStorage.getItem(`soc_live_${state.currentSymbol}`);
-      if (cached) dispatch({ type: 'SET_LIVE_DATA', payload: JSON.parse(cached) });
-    } catch (_) {}
 
     const loadOnce = async () => {
       if (wsDataReceivedRef.current) return; // WS was faster — skip
@@ -339,7 +352,8 @@ function AppContent() {
   useEffect(() => {
     const base = 'Soc.ai.in';
     let page = '';
-    if (state.holidayListActive)   page = 'Holiday List';
+    if (state.liveOCActive)        page = 'Live OC';
+    else if (state.holidayListActive) page = 'Holiday List';
     else if (state.supportActive)  page = 'Support';
     else if (state.profileActive)  page = 'Profile';
     else if (state.adminPanelActive) page = 'Admin Panel';
@@ -350,29 +364,28 @@ function AppContent() {
     else if (state.aiStockActive)  page = 'AI Stock';
     else if (state.aiPageActive && state.aiPageType === 'stock') page = 'Power AI Stock';
     else if (state.aiPageActive && state.aiPageType === 'swing') page = 'AI Swing Trade';
-    else if (state.cryptoPageActive) page = 'Crypto Options';
     else if (state.indexPageActive) page = 'Dashboard';
     else if (state.historicalMode) page = 'Historical';
     else page = 'Live Option Chain';
     document.title = `${base} | ${page}`;
   }, [
-    state.holidayListActive, state.supportActive, state.profileActive,
+    state.liveOCActive, state.holidayListActive, state.supportActive, state.profileActive,
     state.adminPanelActive, state.subscriptionActive, state.journalActive,
     state.teamPageActive, state.aiTrainActive, state.aiStockActive, state.aiPageActive,
-    state.aiPageType, state.indexPageActive, state.historicalMode, state.cryptoPageActive,
+    state.aiPageType, state.indexPageActive, state.historicalMode,
   ]);
 
+  // true when user has full access (admin/member always do; regular users need active sub)
+  // null = still loading (subscription not yet resolved — don't show lock)
+  const hasFullAccess = (() => {
+    const role = state.user?.role;
+    if (role === 'admin' || role === 'member') return true;
+    if (state.subscription === null) return null; // still bootstrapping
+    return state.subscription?.active === true;
+  })();
+
   const renderMain = () => {
-    if (state.cryptoPageActive)  return (
-      <>
-        <div className="watermark">SOC.AI.IN</div>
-        <CryptoOIChartModal />
-        <CryptoOptionChain />
-        <UISettings />
-        <Footer />
-        <SOCAIPanel />
-      </>
-    );
+    if (state.liveOCActive)      return <LiveOCPage />;
     if (state.joinMeetActive)    return <JoinMeetPage />;
     if (state.holidayListActive) return <HolidayListPanel />;
     if (state.supportActive)     return <SupportPanel />;
@@ -382,9 +395,66 @@ function AppContent() {
     if (state.journalActive)     return <TradingJournal />;
     if (state.teamPageActive)    return <TeamPage />;
     if (state.aiTrainActive)     return <AITrainPanel />;
-    if (state.aiStockActive)     return <AIStockPanel />;
-    if (state.aiPageActive && state.aiPageType === 'stock') return <PowerAIStockPanel />;
+    if (state.aiStockActive) {
+      if (hasFullAccess === false) return (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100vh', background:'#f0f4f8', gap:20, padding:24, textAlign:'center' }}>
+          <div style={{ fontSize:56 }}>🔒</div>
+          <div style={{ fontSize:22, fontWeight:900, color:'#0d2137' }}>Subscription Required</div>
+          <div style={{ fontSize:14, color:'#64748b', maxWidth:380 }}>AI Stock Signals require an active subscription. Historical data remains free.</div>
+          <button onClick={() => { window.history.pushState(null,'','/subscription'); dispatch({ type:'SET_SUBSCRIPTION_PAGE', payload:true }); }} style={{ padding:'12px 32px', background:'linear-gradient(135deg,#ff6f00,#e65100)', color:'#fff', border:'none', borderRadius:10, fontSize:15, fontWeight:800, cursor:'pointer', marginTop:8 }}>View Plans →</button>
+        </div>
+      );
+      return <AIStockPanel />;
+    }
+    if (state.aiPageActive && state.aiPageType === 'stock') {
+      if (hasFullAccess === false) return (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100vh', background:'#f0f4f8', gap:20, padding:24, textAlign:'center' }}>
+          <div style={{ fontSize:56 }}>🔒</div>
+          <div style={{ fontSize:22, fontWeight:900, color:'#0d2137' }}>Subscription Required</div>
+          <div style={{ fontSize:14, color:'#64748b', maxWidth:380 }}>Power AI Stock requires an active subscription. Historical data remains free.</div>
+          <button onClick={() => { window.history.pushState(null,'','/subscription'); dispatch({ type:'SET_SUBSCRIPTION_PAGE', payload:true }); }} style={{ padding:'12px 32px', background:'linear-gradient(135deg,#ff6f00,#e65100)', color:'#fff', border:'none', borderRadius:10, fontSize:15, fontWeight:800, cursor:'pointer', marginTop:8 }}>View Plans →</button>
+        </div>
+      );
+      return <PowerAIStockPanel />;
+    }
     if (state.indexPageActive)   return <IndexPage />;
+
+    // ── Subscription lock — only covers #mainContent, topbar/sidebar stay visible ──
+    // Historical past dates = free. Today's date (live or historical) = locked.
+    const todayIST = new Date(Date.now() + 5.5 * 3600000).toISOString().split('T')[0];
+    const isViewingToday = state.currentDataDate !== '--' && state.currentDataDate >= todayIST;
+    const showLock = hasFullAccess === false && (!state.historicalMode || isViewingToday);
+    const lockOverlay = showLock ? (
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 200,
+        background: 'rgba(10,25,47,0.93)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        gap: 14, padding: 24, textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 44, lineHeight: 1 }}>🔒</div>
+        <div style={{ fontSize: 20, fontWeight: 900, color: '#fff' }}>
+          {state.historicalMode ? "Today's Data Requires Subscription" : 'Subscription Required'}
+        </div>
+        <div style={{ fontSize: 13, color: '#94a3b8', maxWidth: 340, lineHeight: 1.6 }}>
+          {state.historicalMode
+            ? 'You can view all historical data for free. To view today\'s data, upgrade your plan.'
+            : 'Live Option Chain requires an active subscription. All historical data is free.'}
+        </div>
+        <button
+          onClick={() => {
+            window.history.pushState(null, '', '/subscription');
+            dispatch({ type: 'SET_SUBSCRIPTION_PAGE', payload: true });
+          }}
+          style={{
+            padding: '10px 32px', background: 'linear-gradient(135deg,#ff6f00,#e65100)',
+            color: '#fff', border: 'none', borderRadius: 8, fontSize: 14,
+            fontWeight: 800, cursor: 'pointer', marginTop: 6,
+          }}
+        >
+          View Plans →
+        </button>
+      </div>
+    ) : null;
 
     if (state.splitScreenActive) {
       const mode = state.splitScreenMode;
@@ -400,7 +470,8 @@ function AppContent() {
           <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
             <Topbar />
             <UISettings />
-            <div id="mainContent" style={{ flex: 1, minHeight: 0, height: 'unset', padding: 0, overflow: 'hidden' }}>
+            <div id="mainContent" style={{ flex: 1, minHeight: 0, height: 'unset', padding: 0, overflowY: 'auto', overflowX: 'auto', position: 'relative' }}>
+              {lockOverlay}
               {mode === 'chain' && <OptionChainTable />}
               {mode === 'split' && (
                 <SplitPane
@@ -423,7 +494,8 @@ function AppContent() {
         <div className="watermark">SOC.AI.IN</div>
         <Topbar />
         <UISettings />
-        <div id="mainContent">
+        <div id="mainContent" style={{ position: 'relative' }}>
+          {lockOverlay}
           <LTPCalculator />
           <LTPPopup />
           <ShiftingModal />

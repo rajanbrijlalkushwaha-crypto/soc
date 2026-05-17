@@ -71,9 +71,20 @@ function LoginForm({ onLogin }) {
   );
 }
 
+const INTERVAL_OPTIONS = [1, 2, 3, 5, 10, 15];
+
 // ─── Status Card ──────────────────────────────────────────────────────────────
 function StatusCard({ status, onStart, onStop, loading }) {
   const running = status?.is_running;
+  const [interval, setInterval_] = useState(
+    status?.refresh_interval_seconds || 10
+  );
+
+  // Sync selector to whatever the server is currently using
+  useEffect(() => {
+    if (status?.refresh_interval_seconds) setInterval_(status.refresh_interval_seconds);
+  }, [status?.refresh_interval_seconds]);
+
   return (
     <div className="adm-card">
       <div className="adm-card-title">Server Status</div>
@@ -81,15 +92,49 @@ function StatusCard({ status, onStart, onStop, loading }) {
         <span className={`adm-badge ${running ? 'green' : 'red'}`}>
           {running ? '● Running' : '● Stopped'}
         </span>
+
+        {/* Fetch interval selector */}
+        <div style={{ display:'flex', alignItems:'center', gap:'6px', marginLeft:'auto' }}>
+          <label style={{ fontSize:'12px', color:'#666', whiteSpace:'nowrap' }}>Interval:</label>
+          <select
+            value={interval}
+            onChange={e => setInterval_(Number(e.target.value))}
+            disabled={loading}
+            style={{
+              padding:'4px 8px', borderRadius:'4px', border:'1px solid #ccc',
+              fontSize:'13px', background:'#fff', cursor:'pointer', minWidth:'70px'
+            }}
+          >
+            {INTERVAL_OPTIONS.map(s => (
+              <option key={s} value={s}>{s}s</option>
+            ))}
+          </select>
+        </div>
+
         <button
           className={`adm-btn ${running ? 'adm-btn-danger' : 'adm-btn-success'}`}
-          onClick={running ? onStop : onStart}
+          onClick={running ? onStop : () => onStart(interval)}
           disabled={loading}
         >
-          {loading ? '…' : running ? '⏹ Stop Fetching' : '▶ Start Fetching'}
+          {loading ? '…' : running ? '⏹ Stop' : '▶ Start'}
         </button>
+
+        {/* Change interval while running */}
+        {running && (
+          <button
+            className="adm-btn adm-btn-primary"
+            style={{ fontSize:'12px', padding:'4px 10px' }}
+            onClick={() => onStart(interval)}
+            disabled={loading}
+            title="Restart fetching with new interval"
+          >
+            ↺ Apply
+          </button>
+        )}
       </div>
+
       <div className="adm-meta">
+        <span>Interval: <b>{status?.refresh_interval_seconds ?? interval}s</b></span>
         <span>Last update: <b>{status?.last_update || '—'}</b></span>
         <span>Total updates: <b>{status?.total_updates ?? '—'}</b></span>
         {status?.current_expiry && <span>Expiry: <b>{status.current_expiry}</b></span>}
@@ -145,6 +190,7 @@ function UpstoxConfigCard({ token }) {
   const [emailTime,  setEmailTime] = useState('08:00');
   const [newRow,     setNewRow]    = useState({ ...BLANK });
   const [editSecrets,setEditSecrets]=useState({}); // id -> secret value being typed
+  const [editTokens, setEditTokens]=useState({}); // id -> token value being typed
   const [saving,     setSaving]    = useState(null); // id being saved
   const [adding,     setAdding]    = useState(false);
   const [deleting,   setDeleting]  = useState(null);
@@ -168,8 +214,19 @@ function UpstoxConfigCard({ token }) {
     if (secret) body.api_secret = secret;
     try {
       const d = await API(`/api/admin/upstox-apps/${app.id}`, token, { method: 'PUT', body });
-      if (d.success) { setEditSecrets(s => { const n={...s}; delete n[app.id]; return n; }); load(); }
-      setMsg(d.message || (d.success ? 'Saved!' : 'Failed'));
+      if (d.success) { setEditSecrets(s => { const n={...s}; delete n[app.id]; return n; }); }
+      // Save token separately if one was typed
+      const manualToken = editTokens[app.id];
+      if (manualToken !== undefined) {
+        const td = await API(`/api/admin/upstox-apps/${app.id}/token`, token, {
+          method: 'PATCH', body: { access_token: manualToken },
+        });
+        if (td.success) { setEditTokens(s => { const n={...s}; delete n[app.id]; return n; }); load(); }
+        setMsg(td.message || (td.success ? 'Token saved!' : 'Token save failed'));
+      } else {
+        if (d.success) load();
+        setMsg(d.message || (d.success ? 'Saved!' : 'Failed'));
+      }
     } catch { setMsg('Error saving'); }
     finally { setSaving(null); }
   };
@@ -264,9 +321,15 @@ function UpstoxConfigCard({ token }) {
                     onChange={e => updateApp(a.id, 'redirect_uri', e.target.value)} />
                 </td>
                 <td style={td}>
-                  <span className={`adm-badge ${a.has_token ? 'green' : 'red'}`} style={{ fontSize:'11px' }}>
-                    {a.has_token ? '✓ Active' : '✗ None'}
-                  </span>
+                  <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
+                    <span className={`adm-badge ${a.has_token ? 'green' : 'red'}`} style={{ fontSize:'11px', flexShrink:0 }}>
+                      {a.has_token ? '✓' : '✗'}
+                    </span>
+                    <input className="adm-input" style={{ marginBottom:0, minWidth:'160px' }} type="password"
+                      placeholder={a.has_token ? '(active — paste to replace)' : 'Paste access token'}
+                      value={editTokens[a.id] || ''}
+                      onChange={e => setEditTokens(s => ({ ...s, [a.id]: e.target.value }))} />
+                  </div>
                 </td>
                 <td style={{ ...td, whiteSpace:'nowrap' }}>
                   <button className="adm-btn adm-btn-primary" style={{ width:'auto', marginTop:0, padding:'5px 12px', marginRight:'4px' }}
@@ -508,9 +571,12 @@ function Dashboard({ token, onLogout }) {
     return () => clearInterval(id);
   }, [fetchStatus, fetchSchedule]);
 
-  const startFetching = async () => {
+  const startFetching = async (intervalSeconds) => {
     setActionLoading(true);
-    await API('/api/admin/start', token, { method: 'POST' });
+    await API('/api/admin/start', token, {
+      method: 'POST',
+      body: { interval_seconds: intervalSeconds },
+    });
     await fetchStatus();
     setActionLoading(false);
   };

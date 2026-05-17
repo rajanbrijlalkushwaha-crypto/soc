@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useRef } from 'react';
+import { createContext, useContext, useReducer, useRef, useEffect } from 'react';
 
 const AppContext = createContext(null);
 
@@ -19,6 +19,9 @@ const initialState = {
   currentTime: '--',
   lotSize: 1,
   chainData: [],
+  chains: {},
+  availableExpiries: [],
+  selectedExpiry: null,
 
   // Toggles
   greeksActive: false,
@@ -83,7 +86,7 @@ const initialState = {
   cryptoOiChartModal: null,
 
   // Index / Dashboard page
-  indexPageActive: true,
+  indexPageActive: false,
 
   // AI Page
   aiPageActive: false,
@@ -101,6 +104,7 @@ const initialState = {
   aiStockActive: false,
   joinMeetActive: false,
   cryptoPageActive: false,
+  liveOCActive: false,
 
   // Notifications
   notifPanelOpen: false,
@@ -116,6 +120,9 @@ const initialState = {
   // User
   user: null,
   isAuthenticated: false,
+
+  // Subscription
+  subscription: null,   // { active, planName, endDate, daysLeft } or null
 
   // Indicator access config (loaded from /api/indicators)
   indicators: [],
@@ -151,30 +158,44 @@ function appReducer(state, action) {
       return { ...state, availableSymbols: action.payload };
     case 'SET_CURRENT_SYMBOL':
       return { ...state, currentSymbol: action.payload, signalsLoading: true,
+        selectedExpiry: null, chains: {}, availableExpiries: [],
         mctrSupport: null, mctrResistance: null,
         shiftingResistance: null, shiftingSupport: null, shiftingTimeline: [],
         strategy40Support: null, strategy40Resistance: null,
         nextDayBromosR: null, nextDayBromosS: null,
         strongSupport: null, strongResistance: null,
         strong2ndSupport: null, strong2ndResistance: null };
-    case 'SET_LIVE_DATA':
+    case 'SET_SELECTED_EXPIRY': {
+      const expiry    = action.payload;
+      const chainData = state.chains[expiry] || state.chainData;
+      return { ...state, selectedExpiry: expiry, chainData };
+    }
+    case 'SET_LIVE_DATA': {
+      const incomingChains   = action.payload.chains || (action.payload.chain ? { [action.payload.expiry]: action.payload.chain } : {});
+      const incomingExpiries = action.payload.availableExpiries || (action.payload.expiry ? [action.payload.expiry] : []);
+      const mergedChains     = { ...state.chains, ...incomingChains };
+      const sel              = state.selectedExpiry;
+      const chainData        = (sel && mergedChains[sel]) ? mergedChains[sel] : (action.payload.chain || []);
       return {
         ...state,
         loading: false,
-        currentSpot:      action.payload.spot_price       || 0,
-        spotPrevClose:    action.payload.spot_prev_close   || 0,
-        spotChange:       action.payload.spot_change       || 0,
-        spotPctChange:    action.payload.spot_pct_change   || 0,
-        futuresLtp:       action.payload.futures_ltp       || 0,
-        futuresPrevClose: action.payload.futures_prev_close|| 0,
-        futuresChange:    action.payload.futures_change    || 0,
-        futuresPctChange: action.payload.futures_pct_change|| 0,
-        chainData:        action.payload.chain             || [],
-        currentExpiry:    action.payload.expiry            || '--',
-        currentDataDate:  action.payload.date              || '--',
-        currentTime:      action.payload.time              || '--',
-        lotSize:          action.payload.lot_size          || 1,
+        currentSpot:       action.payload.spot_price        || 0,
+        spotPrevClose:     action.payload.spot_prev_close    || 0,
+        spotChange:        action.payload.spot_change        || 0,
+        spotPctChange:     action.payload.spot_pct_change    || 0,
+        futuresLtp:        action.payload.futures_ltp        || 0,
+        futuresPrevClose:  action.payload.futures_prev_close || 0,
+        futuresChange:     action.payload.futures_change     || 0,
+        futuresPctChange:  action.payload.futures_pct_change || 0,
+        chainData,
+        chains:            mergedChains,
+        availableExpiries: incomingExpiries.length ? incomingExpiries : state.availableExpiries,
+        currentExpiry:     action.payload.expiry             || '--',
+        currentDataDate:   action.payload.date               || '--',
+        currentTime:       action.payload.time               || '--',
+        lotSize:           action.payload.lot_size           || 1,
       };
+    }
     case 'SET_LOT_SIZE':
       return { ...state, lotSize: action.payload };
     case 'SET_CHAIN_DATA':
@@ -256,6 +277,9 @@ function appReducer(state, action) {
         ? { ...state, adminPanelActive: true, aiTrainActive: false, aiStockActive: false, profileActive: false, holidayListActive: false, supportActive: false, subscriptionActive: false, journalActive: false, teamPageActive: false, aiPageActive: false, indexPageActive: false }
         : { ...state, adminPanelActive: false };
     case 'SET_SUBSCRIPTION':
+      // Stores subscription data object into state — does NOT navigate
+      return { ...state, subscription: action.payload };
+    case 'SET_SUBSCRIPTION_PAGE':
       return action.payload
         ? { ...state, subscriptionActive: true, aiTrainActive: false, aiStockActive: false, profileActive: false, adminPanelActive: false, holidayListActive: false, supportActive: false, journalActive: false, teamPageActive: false, aiPageActive: false, indexPageActive: false }
         : { ...state, subscriptionActive: false };
@@ -281,8 +305,12 @@ function appReducer(state, action) {
         : { ...state, joinMeetActive: false };
     case 'SET_CRYPTO_PAGE':
       return action.payload
-        ? { ...state, cryptoPageActive: true, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        ? { ...state, cryptoPageActive: true, liveOCActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
         : { ...state, cryptoPageActive: false };
+    case 'SET_LIVE_OC':
+      return action.payload
+        ? { ...state, liveOCActive: true, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        : { ...state, liveOCActive: false };
     case 'SET_NOTIF_PANEL':
       return { ...state, notifPanelOpen: action.payload };
     case 'SET_NOTIF_UNREAD':
@@ -320,6 +348,8 @@ function appReducer(state, action) {
       return { ...state, currentSnapshotIndex: action.payload };
     case 'SET_USER':
       return { ...state, user: action.payload, isAuthenticated: !!action.payload };
+    case 'SET_SUBSCRIPTION':
+      return { ...state, subscription: action.payload };
     case 'SET_INDICATORS':
       return { ...state, indicators: action.payload };
     case 'SET_LOADING':
@@ -369,6 +399,26 @@ function appReducer(state, action) {
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
   const liveIntervalRef = useRef(null);
+
+  // Detect session invalidated from another device — auto-logout
+  useEffect(() => {
+    const origFetch = window.fetch;
+    window.fetch = async (...args) => {
+      const resp = await origFetch(...args);
+      if (resp.status === 401) {
+        try {
+          const clone = resp.clone();
+          const data = await clone.json();
+          if (data?.code === 'SESSION_INVALIDATED') {
+            localStorage.removeItem('soc_bootstrap');
+            dispatch({ type: 'SET_USER', payload: null });
+          }
+        } catch (_) {}
+      }
+      return resp;
+    };
+    return () => { window.fetch = origFetch; };
+  }, []);
 
   return (
     <AppContext.Provider value={{ state, dispatch, liveIntervalRef }}>

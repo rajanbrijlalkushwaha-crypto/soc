@@ -301,13 +301,12 @@ export default function SplitChart() {
       const dt = new Date(param.time * 1000);
       const hh = String(dt.getUTCHours()).padStart(2,'0');
       const mm = String(dt.getUTCMinutes()).padStart(2,'0');
-      tooltip.innerHTML = `<b>${hh}:${mm}</b>  O:${d.open?.toFixed(2)}  H:${d.high?.toFixed(2)}  L:${d.low?.toFixed(2)}  C:${d.close?.toFixed(2)}`;
-      const el = containerRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
+      tooltip.innerHTML = `<b>${hh}:${mm}</b>&nbsp;&nbsp;O:${d.open?.toFixed(2)}&nbsp;&nbsp;H:${d.high?.toFixed(2)}&nbsp;&nbsp;L:${d.low?.toFixed(2)}&nbsp;&nbsp;C:${d.close?.toFixed(2)}`;
+      const elC = containerRef.current;
+      if (!elC) return;
       let left = param.point.x + 10;
       let top  = param.point.y - 32;
-      if (left + 260 > rect.width) left = param.point.x - 270;
+      if (left + 260 > elC.clientWidth) left = param.point.x - 270;
       if (top < 4) top = 4;
       tooltip.style.left    = `${left}px`;
       tooltip.style.top     = `${top}px`;
@@ -643,7 +642,7 @@ export default function SplitChart() {
           {/* HTML overlay for price-line labels */}
           <div ref={overlayRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 10 }} />
           {/* OHLC hover tooltip */}
-          <div ref={tooltipRef} style={{ display: 'none', position: 'absolute', zIndex: 20, background: 'rgba(0,0,0,0.78)', color: '#fff', fontSize: '12px', fontWeight: 600, padding: '4px 10px', borderRadius: '5px', pointerEvents: 'none', whiteSpace: 'nowrap' }} />
+          <div ref={tooltipRef} style={{ display: 'none', position: 'absolute', zIndex: 20, background: 'rgba(0,0,0,0.75)', color: '#fff', fontSize: '12px', fontWeight: 600, padding: '4px 10px', borderRadius: '5px', pointerEvents: 'none', whiteSpace: 'nowrap' }} />
           {/* Vertical separator: Pre-Market | Market */}
           <div ref={vlineRef} className="sc-vline" style={{ display: 'none' }}>
             <span className="sc-vline-pre">Pre-Market</span>

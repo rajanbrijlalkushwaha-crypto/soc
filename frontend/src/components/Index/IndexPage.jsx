@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { fetchLiveData, fetchMarketHolidays, fetchMarketTimings } from '../../services/api';
+import { fetchMarketHolidays, fetchMarketTimings } from '../../services/api';
+import wsClient from '../../services/wsClient';
 import './IndexPage.css';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
@@ -13,14 +14,26 @@ function useBodyScroll() {
   }, []);
 }
 
-// Priority order for known indices
+// All symbols that are indices (shown before stocks in the list)
+const ALL_INDEX_SYMBOLS = new Set([
+  'NIFTY','BANKNIFTY','FINNIFTY','MIDCPNIFTY','NIFTYNXT50',
+  'SENSEX','BANKEX','SENSEX50',
+  'NIFTY100','NIFTY200','NIFTY500','NIFTYMID100','NIFTYSC100',
+  'NIFTYIT','NIFTYAUTO','NIFTYPHARMA','NIFTYMETAL','NIFTYENERGY',
+  'NIFTYFMCG','NIFTYPSUBNK','NIFTYREALTY','NIFTYPVTBNK','NIFTYMEDIA','INDIAVIX',
+  'BSE100','BSE200','BSE500','AUTO','METAL','BSEIT','HEALTHCARE','BSEREALTY',
+]);
+
+// Fine-grained priority within indices (lower index = shown first)
 const INDEX_PRIORITY = [
   (s) => s === 'NIFTY' || s === 'NIFTY_50' || s === 'NIFTY50',
   (s) => s === 'BANKNIFTY' || s === 'BANK_NIFTY',
-  (s) => s.startsWith('MIDCAP') || s === 'MIDCAPNIFTY' || s === 'MIDCAP_NIFTY',
   (s) => s === 'FINNIFTY' || s === 'FIN_NIFTY',
-  (s) => s.includes('SENSEX'),
-  (s) => s.includes('BANKEX'),
+  (s) => s === 'MIDCPNIFTY' || s.startsWith('MIDCAP') || s === 'MIDCAP_NIFTY',
+  (s) => s === 'NIFTYNXT50',
+  (s) => s === 'SENSEX',
+  (s) => s === 'BANKEX',
+  (s) => s === 'SENSEX50',
 ];
 
 function getIndexRank(symbol) {
@@ -28,15 +41,25 @@ function getIndexRank(symbol) {
   for (let i = 0; i < INDEX_PRIORITY.length; i++) {
     if (INDEX_PRIORITY[i](s)) return i;
   }
-  return INDEX_PRIORITY.length;
+  return INDEX_PRIORITY.length; // other indices get same rank, sorted alphabetically
 }
 
 function isIndex(symbol) {
-  return getIndexRank(symbol) < INDEX_PRIORITY.length;
+  const s = symbol.toUpperCase();
+  return ALL_INDEX_SYMBOLS.has(s) || s.includes('NIFTY') || s.includes('SENSEX') || s.includes('BANKEX');
 }
 
 function sortSymbols(symbols) {
-  return [...symbols].sort((a, b) => getIndexRank(a) - getIndexRank(b));
+  return [...symbols].sort((a, b) => {
+    const aIdx = isIndex(a);
+    const bIdx = isIndex(b);
+    if (aIdx !== bIdx) return aIdx ? -1 : 1;   // all indices before all stocks
+    if (aIdx) {
+      const ra = getIndexRank(a), rb = getIndexRank(b);
+      return ra !== rb ? ra - rb : a.localeCompare(b);
+    }
+    return a.localeCompare(b);                  // stocks alphabetical
+  });
 }
 
 function getExchange(symbol) {
@@ -106,14 +129,14 @@ function isExchangeOpen(startMs, endMs) {
 export default function IndexPage() {
   useBodyScroll();
   const { state, dispatch } = useApp();
-  const [prices,      setPrices]      = useState({});
-  const [lastRefresh, setLastRefresh] = useState(null);
-  const [marketOpen,  setMarketOpen]  = useState(isMarketOpen());
-  const [timings,     setTimings]     = useState({ date: null, rows: [] });
-  const [holidays,    setHolidays]    = useState([]);
+  const [prices,       setPrices]       = useState({});
+  const [lastRefresh,  setLastRefresh]  = useState(null);
+  const [marketOpen,   setMarketOpen]   = useState(isMarketOpen());
+  const [timings,      setTimings]      = useState({ date: null, rows: [] });
+  const [holidays,     setHolidays]     = useState([]);
   const [holidaysOpen, setHolidaysOpen] = useState(false);
-  const [istClock,    setIstClock]    = useState({ time: '', date: '' });
-  const [aiSignals,   setAiSignals]   = useState(null);
+  const [istClock,     setIstClock]     = useState({ time: '', date: '' });
+  const [aiSignals,    setAiSignals]    = useState(null);
 
   const isAdminOrMember = state.user?.role === 'admin' || state.user?.role === 'member';
 
@@ -132,7 +155,7 @@ export default function IndexPage() {
     return () => clearInterval(id);
   }, []);
 
-  // Re-check market status every minute (also forces exchange badge re-render)
+  // Re-check market status every minute
   useEffect(() => {
     const id = setInterval(() => setMarketOpen(isMarketOpen()), 60000);
     return () => clearInterval(id);
@@ -164,29 +187,42 @@ export default function IndexPage() {
       .catch(() => {});
   }, []);
 
-  const refreshPrices = useCallback(async () => {
-    if (!state.symbols.length) return;
-    const results = await Promise.allSettled(
-      state.symbols.map(sym => fetchLiveData(sym))
-    );
-    const updated = {};
-    state.symbols.forEach((sym, i) => {
-      const r = results[i];
-      if (r.status === 'fulfilled') {
-        updated[sym] = { spot: r.value.spot_price ?? null, time: r.value.time ?? '--', error: false };
-      } else {
-        updated[sym] = { spot: null, time: '--', error: true };
-      }
-    });
-    setPrices(updated);
-    setLastRefresh(new Date().toLocaleTimeString('en-IN'));
-  }, [state.symbols]);
-
+  // Live spot prices — initial load via compact endpoint, real-time via WebSocket
   useEffect(() => {
-    refreshPrices();
-    const id = setInterval(refreshPrices, 15000);
-    return () => clearInterval(id);
-  }, [refreshPrices]);
+    if (!state.symbols.length) return;
+
+    // One compact HTTP call for instant initial render (all symbols, just spot + time)
+    fetch(`${API_BASE}/api/spot-prices`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => {
+        if (d.prices) {
+          setPrices(prev => {
+            const updated = { ...prev };
+            for (const [sym, info] of Object.entries(d.prices)) {
+              updated[sym] = { spot: info.spot, time: info.time || '--', error: false };
+            }
+            return updated;
+          });
+          setLastRefresh(new Date().toLocaleTimeString('en-IN'));
+        }
+      })
+      .catch(() => {});
+
+    // Real-time push updates via WebSocket — fires the moment backend updates data
+    const unsubs = state.symbols.map(sym =>
+      wsClient.subscribe(sym, ({ type, data }) => {
+        if ((type === 'full' || type === 'diff') && data?.spot_price !== undefined) {
+          setPrices(prev => ({
+            ...prev,
+            [sym]: { spot: data.spot_price, time: data.time || prev[sym]?.time || '--', error: false },
+          }));
+          setLastRefresh(new Date().toLocaleTimeString('en-IN'));
+        }
+      })
+    );
+
+    return () => unsubs.forEach(u => u());
+  }, [state.symbols]);
 
   const openChain = (symbol) => {
     dispatch({ type: 'SET_CURRENT_SYMBOL', payload: symbol });
@@ -214,6 +250,7 @@ export default function IndexPage() {
 
   return (
     <div className="idx-page">
+
       {/* ── White Top Bar ── */}
       <div className="idx-topbar">
         <div className="idx-topbar-left">
@@ -244,9 +281,111 @@ export default function IndexPage() {
         </div>
       </div>
 
+      {/* ── Scrollable body: hero + content scroll together ── */}
+      <div className="idx-scroll-body">
+
+      {/* ── Hero Section ── */}
+      <div className="idx-hero">
+
+        {/* Top row: heading left + welcome card right */}
+        <div className="idx-hero-top">
+          <div className="idx-hero-text">
+            <h1 className="idx-hero-h1">
+              Welcome to <span style={{ color: '#f97316' }}>Simplify</span>{' '}
+              <span style={{ color: '#ef4444' }}>Option</span>{' '}
+              <span style={{ color: '#22c55e' }}>Chain</span>
+            </h1>
+            <h2 className="idx-hero-h2">(Formally known as soc.ai.in)</h2>
+            <p className="idx-hero-tagline">Your Intelligent Pathway to Precise Option Analysis</p>
+          </div>
+          <div className="idx-hero-card">
+            <div className="idx-hc-text">
+              <span className="idx-hc-welcome">WELCOME</span>
+              <span className="idx-hc-to">to your</span>
+              <span className="idx-hc-simplified">Simplified<br />Trading</span>
+            </div>
+            <div className="idx-hc-avatar">🧑‍💼</div>
+          </div>
+        </div>
+
+        {/* Partner cards */}
+        <div className="idx-hero-partners">
+          <div className="idx-partner-col">
+            <div className="idx-pc-header">
+              <span className="idx-pc-label">Partnership with</span>
+              <span className="idx-pc-name">Indiabulls Securities &amp; Dhan</span>
+            </div>
+            <div className="idx-pc-card idx-pc-card-row">
+              <div className="idx-pc-logo-wrap">
+                <img src="/partners/indiabulls.png" alt="Indiabulls Securities" className="idx-pc-img"
+                  onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block'; }} />
+                <span style={{ display: 'none', fontWeight: 800, color: '#1a9e3f' }}>Indiabulls</span>
+              </div>
+              <div className="idx-pc-divider" />
+              <div className="idx-pc-logo-wrap">
+                <img src="/partners/dhan.png" alt="Dhan" className="idx-pc-img"
+                  onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block'; }} />
+                <span style={{ display: 'none', fontWeight: 800, color: '#1a9e3f' }}>Dhan</span>
+              </div>
+            </div>
+            <div className="idx-pc-btns idx-pc-btns-row">
+              <a href="#" className="idx-pc-btn" target="_blank" rel="noreferrer">Create Indiabulls Account</a>
+              <a href="https://join.dhan.co/?invite=WQUHQ61043" className="idx-pc-btn" target="_blank" rel="noreferrer">Create Dhan Account</a>
+            </div>
+          </div>
+
+          <div className="idx-partner-col">
+            <div className="idx-pc-header">
+              <span className="idx-pc-label">Mutual Fund Partner</span>
+            </div>
+            <div className="idx-pc-card">
+              <img src="/partners/kotak.png" alt="Kotak Securities" className="idx-pc-img"
+                onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block'; }} />
+              <span style={{ display: 'none', fontWeight: 800, color: '#e84c0a' }}>Kotak Securities</span>
+            </div>
+            <div className="idx-pc-btns">
+              <a href="#" className="idx-pc-btn" target="_blank" rel="noreferrer">Create Kotak MF Account</a>
+            </div>
+          </div>
+
+          <div className="idx-partner-col">
+            <div className="idx-pc-header">
+              <span className="idx-pc-label">Trading Partner</span>
+              <span className="idx-pc-name">Alice Blue</span>
+            </div>
+            <div className="idx-pc-card">
+              <img src="/partners/aliceblue.png" alt="Alice Blue" className="idx-pc-img"
+                onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block'; }} />
+              <span style={{ display: 'none', fontWeight: 800, color: '#1a56db' }}>Alice Blue</span>
+            </div>
+            <div className="idx-pc-btns">
+              <a href="https://ekyc.aliceblueonline.com/?source=WSRT151" className="idx-pc-btn" target="_blank" rel="noreferrer">Create Alice Blue Account</a>
+            </div>
+          </div>
+        </div>
+
+        {/* Social icons */}
+        <div className="idx-hero-social">
+          <a href="https://x.com/simplifyoc" target="_blank" rel="noreferrer" className="idx-social-btn idx-social-x" title="X / Twitter">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.742l7.73-8.835L1.254 2.25H8.08l4.253 5.622 5.911-5.622Zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
+          </a>
+          <a href="https://t.me/simplifyoc" target="_blank" rel="noreferrer" className="idx-social-btn idx-social-tg" title="Telegram">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" /></svg>
+          </a>
+          <a href="https://instagram.com/simplifyoc" target="_blank" rel="noreferrer" className="idx-social-btn idx-social-ig" title="Instagram">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z" /></svg>
+          </a>
+          <a href="https://youtube.com/@simplifyoc" target="_blank" rel="noreferrer" className="idx-social-btn idx-social-yt" title="YouTube">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" /></svg>
+          </a>
+        </div>
+
+      </div>
+
+      {/* ── Scrollable content below hero ── */}
       <div className="idx-content">
 
-        {/* ── Market Timings Table (above cards) ── */}
+        {/* ── Market Timings Table ── */}
         {timings.rows.length > 0 && (
           <div className="idx-timing-section">
             <div className="idx-timing-header">
@@ -301,7 +440,7 @@ export default function IndexPage() {
           </div>
         )}
 
-        {/* ── Cards Grid ── */}
+        {/* ── Live Market Prices ── */}
         <div className="idx-section-title">Live Market Prices</div>
         <div className="idx-grid">
           {sorted.map(symbol => {
@@ -397,7 +536,7 @@ export default function IndexPage() {
           </div>
         )}
 
-        {/* ── Market Holidays Accordion (below cards) ── */}
+        {/* ── Market Holidays Accordion ── */}
         <div className="idx-holidays-section">
           <button
             className="idx-holidays-toggle"
@@ -451,6 +590,8 @@ export default function IndexPage() {
         </div>
 
       </div>
+
+      </div>{/* end idx-scroll-body */}
     </div>
   );
 }

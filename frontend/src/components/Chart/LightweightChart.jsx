@@ -2,10 +2,24 @@ import { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries } from 'lightweight-charts';
 import { fetchLiveCandles, fetchHistoricalCandles } from '../../services/api';
 
+
 const POLL_MS = 10000; // fallback poll interval when WebSocket is unavailable
 
 function parseCandles(data, fallbackDate, cutoffTime) {
   if (!data?.candles?.length) return null;
+
+  // Fast path: candles already have epoch-second times (from _chart_upstox.json)
+  if (data.isEpoch) {
+    if (!cutoffTime) return data.candles;
+    const cutHHMM = cutoffTime.substring(0, 5);
+    return data.candles.filter(c => {
+      const d = new Date(c.time * 1000);
+      const hhmm = `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+      return hhmm <= cutHHMM;
+    });
+  }
+
+  // Slow path: candles have HH:MM string times (from gz snapshot scan)
   const tradeDate = data.date || fallbackDate;
   const cutoffHHMM = cutoffTime ? cutoffTime.substring(0, 5) : null;
   return data.candles

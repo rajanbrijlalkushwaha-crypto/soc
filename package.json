@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "scripts": {
     "start": "node backend/server.js",
-    "dev": "node backend/server.js & npm --prefix frontend start",
-    "dev:watch": "nodemon backend/server.js",
+    "dev": "concurrently \"node backend/server.js\" \"npm --prefix frontend start\"",
+    "dev:watch": "concurrently \"nodemon backend/server.js\" \"npm --prefix frontend start\"",
     "build:frontend": "npm --prefix frontend run build",
-    "install:backend": "npm --prefix backend install"
+    "install:all": "npm --prefix backend install && npm --prefix frontend install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.14"
   }
 }

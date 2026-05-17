@@ -10,9 +10,25 @@ const api = axios.create({
 });
 
 
+api.interceptors.response.use(
+  r => r,
+  err => {
+    if (err.response?.status === 401 && err.response?.data?.code === 'SESSION_INVALIDATED') {
+      localStorage.clear();
+      window.location.href = '/';
+    }
+    return Promise.reject(err);
+  }
+);
+
 // ─── LIVE DATA ───
 export const fetchLiveData = (symbol) =>
   api.get(`/api/live/${symbol}`).then(r => r.data);
+
+// Single round-trip that returns symbols + first symbol's live data
+// Use this on initial page load instead of separate symbols + live calls
+export const fetchPrefetch = () =>
+  api.get('/api/prefetch').then(r => r.data);
 
 // Combined signals (shifting + MCTR + strategy40) in one call, served from RAM
 export const fetchLiveSignals = (symbol) =>

@@ -1,6 +1,7 @@
 import { useApp } from '../../context/AppContext';
 import HistoricalControls from '../Historical/HistoricalControls';
 import SymbolSelect from './SymbolSelect';
+import ExpirySelect from './ExpirySelect';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -28,9 +29,13 @@ export default function Topbar() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             SYMBOL: <SymbolSelect />
           </div>
-          <div>EXPIRY: {state.loading && state.currentExpiry === '--'
-            ? <span className="skeleton skeleton-topbar" />
-            : <span style={{ color: '#1976d2' }}>{state.currentExpiry}</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            EXPIRY:&nbsp;
+            {state.loading && state.currentExpiry === '--' ? (
+              <span className="skeleton skeleton-topbar" />
+            ) : (
+              <ExpirySelect />
+            )}
           </div>
           <div>DATA DATE: {state.loading && state.currentDataDate === '--'
             ? <span className="skeleton skeleton-topbar wide" />

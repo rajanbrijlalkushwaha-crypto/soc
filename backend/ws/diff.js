@@ -106,6 +106,15 @@ function diffSnapshot(prev, next) {
   const chainDiff = diffChain(prev.chain, next.chain);
   if (chainDiff) result.chain = chainDiff;
 
+  // ── Chains map (all expiries) — full replacement when changed ─────────────
+  if (next.chains && JSON.stringify(prev.chains) !== JSON.stringify(next.chains)) {
+    result.chains = next.chains;
+  }
+  if (next.availableExpiries && JSON.stringify(prev.availableExpiries) !== JSON.stringify(next.availableExpiries)) {
+    result.availableExpiries = next.availableExpiries;
+  }
+  if (prev.nextExpiry !== next.nextExpiry) result.nextExpiry = next.nextExpiry;
+
   return Object.keys(result).length ? result : null; // null = no change, skip publish
 }
 

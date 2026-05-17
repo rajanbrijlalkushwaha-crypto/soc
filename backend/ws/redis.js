@@ -11,22 +11,33 @@
 
 const Redis = require('ioredis');
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+const REDIS_URL = process.env.DRAGONFLY_URL || process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
-const redisOpts = {
+const pubOpts = {
   connectTimeout:       3000,
   maxRetriesPerRequest: 1,
-  enableOfflineQueue:   false,
-  retryStrategy: (times) => Math.min(times * 200, 5000), // exponential back-off, max 5 s
+  enableOfflineQueue:   false,  // pub: drop stale writes, never queue
+  retryStrategy: (times) => times <= 3 ? times * 200 : 30000,
 };
 
-const pub = new Redis(REDIS_URL, redisOpts);
-const sub = new Redis(REDIS_URL, redisOpts);
+// sub MUST have enableOfflineQueue:true so ioredis can replay SUBSCRIBE
+// commands after reconnect without hitting the "subscriber mode" error.
+const subOpts = {
+  connectTimeout:       3000,
+  maxRetriesPerRequest: null,   // unlimited retries for subscriber
+  enableOfflineQueue:   true,
+  retryStrategy: (times) => times <= 3 ? times * 200 : 30000,
+};
 
-pub.on('connect', () => console.log('[Redis pub] connected'));
-pub.on('error',   (e) => console.error('[Redis pub] error:', e.message));
+const pub = new Redis(REDIS_URL, pubOpts);
+const sub = new Redis(REDIS_URL, subOpts);
 
-sub.on('connect', () => console.log('[Redis sub] connected'));
-sub.on('error',   (e) => console.error('[Redis sub] error:', e.message));
+// Log connection events once — suppress repeated ECONNREFUSED spam
+let _pubLogged = false, _subLogged = false;
+pub.on('connect', () => { _pubLogged = false; console.log('[Redis pub] connected'); });
+pub.on('error',   (e) => { if (!_pubLogged) { console.error('[Redis pub] unavailable — retrying silently:', e.message); _pubLogged = true; } });
+
+sub.on('connect', () => { _subLogged = false; console.log('[Redis sub] connected'); });
+sub.on('error',   (e) => { if (!_subLogged) { console.error('[Redis sub] unavailable — retrying silently:', e.message); _subLogged = true; } });
 
 module.exports = { pub, sub };

@@ -134,6 +134,8 @@
 .admp-btn-warn    { background: #e65100; color: #fff; }
 .admp-btn-warn:hover:not(:disabled) { background: #bf360c; }
 .admp-btn-sm { padding: 5px 10px; font-size: 11px; }
+.admp-btn-danger { background: #b71c1c; color: #fff; }
+.admp-btn-danger:hover:not(:disabled) { background: #8b0000; }
 
 /* ── User Table ── */
 .admp-table-wrap { overflow-x: auto; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
@@ -208,6 +210,44 @@ img.admp-avatar { object-fit: cover; }
 }
 .admp-status.active    { background: #e8f5e9; color: #1b5e20; }
 .admp-status.suspended { background: #fbe9e7; color: #b71c1c; }
+
+/* ── Section title & label ── */
+.admp-section-title {
+  font-size: 13px;
+  font-weight: 900;
+  color: #1a1a2e;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-bottom: 0;
+}
+.admp-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 5px;
+}
+
+/* ── Card (generic white card) ── */
+.admp-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 18px 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+/* ── Form grid ── */
+.admp-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.admp-form-grid-full { grid-column: 1 / -1; }
+
+/* ── msg overrides for subscription tabs ── */
+.admp-msg.success { color: #1b5e20; }
 
 /* ── System Tab ── */
 .admp-sys-grid {

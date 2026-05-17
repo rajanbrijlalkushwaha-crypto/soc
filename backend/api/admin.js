@@ -3,34 +3,27 @@ const fs = require("fs");
 const path = require("path");
 
 module.exports = function (app) {
-  // Admin: Start auto-refresh
+  // Admin: Start auto-refresh (supports interval_seconds override)
   app.post("/api/admin/start", (req, res) => {
     try {
       const server = require("../server.js");
-      
-      if (server.serverState.isRunning) {
-        return res.json({
-          success: false,
-          message: "Auto-refresh is already running"
-        });
+
+      // Apply interval override before starting
+      const reqInterval = parseInt(req.body?.interval_seconds);
+      if (reqInterval && reqInterval >= 1 && reqInterval <= 60) {
+        server.CONFIG.REFRESH_INTERVAL = reqInterval * 1000;
+        server.log(`⏱ Fetch interval set to ${reqInterval}s`);
       }
-      
-      server.startAutoRefresh();
-      
+
+      server.startFetching();
+
       res.json({
         success: true,
-        message: "Auto-refresh started",
-        mode: server.serverState.mode,
-        next_refresh: server.serverState.nextRefresh,
-        instrument: server.CONFIG.INSTRUMENT_KEY,
-        interval: server.CONFIG.REFRESH_INTERVAL / 1000
+        message: "Fetching started",
+        interval_seconds: server.CONFIG.REFRESH_INTERVAL / 1000
       });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error starting auto-refresh",
-        error: error.message
-      });
+      res.status(500).json({ success: false, message: "Error starting", error: error.message });
     }
   });
 
@@ -38,28 +31,10 @@ module.exports = function (app) {
   app.post("/api/admin/stop", (req, res) => {
     try {
       const server = require("../server.js");
-      
-      if (!server.serverState.isRunning) {
-        return res.json({
-          success: false,
-          message: "Auto-refresh is not running"
-        });
-      }
-      
-      server.stopAutoRefresh();
-      
-      res.json({
-        success: true,
-        message: "Auto-refresh stopped",
-        mode: server.serverState.mode,
-        last_update: server.serverState.lastUpdateIST
-      });
+      server.stopFetching();
+      res.json({ success: true, message: "Fetching stopped" });
     } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Error stopping auto-refresh",
-        error: error.message
-      });
+      res.status(500).json({ success: false, message: "Error stopping", error: error.message });
     }
   });
 
@@ -83,10 +58,10 @@ module.exports = function (app) {
       if (save_to_env) {
         const envPath = path.join(__dirname, "..", ".env");
         let envContent = "";
-        
+
         if (fs.existsSync(envPath)) {
           envContent = fs.readFileSync(envPath, "utf8");
-          
+
           // Update or add UPSTOX_ACCESS_TOKEN
           if (envContent.includes("UPSTOX_ACCESS_TOKEN=")) {
             envContent = envContent.replace(
@@ -99,7 +74,7 @@ module.exports = function (app) {
         } else {
           envContent = `UPSTOX_ACCESS_TOKEN=${token}`;
         }
-        
+
         fs.writeFileSync(envPath, envContent);
       }
       
@@ -284,36 +259,28 @@ module.exports = function (app) {
     }
   });
 
-  // Admin: Get recent logs — in-memory buffer first, PM2 log file as fallback
+  // Admin: Get recent logs — file (persistent) merged with in-memory buffer
   app.get("/api/admin/logs", (req, res) => {
     try {
-      const server = require("../server.js");
-      const lines  = parseInt(req.query.lines) || 200;
+      const server  = require("../server.js");
+      const pathMod = require("path");
+      const lines   = parseInt(req.query.lines) || 200;
+      const logFile = server.LOG_FILE_PATH || pathMod.join(__dirname, '..', 'server.log');
 
-      // 1. Serve from in-memory ring buffer (captures ALL console.log output)
-      if (server.logBuffer && server.logBuffer.length > 0) {
-        const recent = server.logBuffer.slice(-lines);
-        return res.json({ success: true, logs: recent, total_lines: server.logBuffer.length, source: 'buffer' });
+      // Read from persisted log file (source of truth across restarts)
+      let fileLines = [];
+      if (fs.existsSync(logFile)) {
+        const content = fs.readFileSync(logFile, 'utf8');
+        fileLines = content.split('\n').filter(l => l.trim());
       }
 
-      // 2. Fallback: read PM2 stdout log file
-      const os = require('os');
-      const pm2Log = require('path').join(os.homedir(), '.pm2', 'logs', 'soc-out.log');
-      const pm2Err = require('path').join(os.homedir(), '.pm2', 'logs', 'soc-error.log');
+      // Merge: file lines + any buffer lines not yet flushed (dedup by content)
+      const fileSet = new Set(fileLines.slice(-500));
+      const bufferOnly = (server.logBuffer || []).filter(l => !fileSet.has(l));
+      const merged = [...fileLines, ...bufferOnly];
 
-      let allLines = [];
-      for (const f of [pm2Log, pm2Err]) {
-        if (fs.existsSync(f)) {
-          const content = fs.readFileSync(f, 'utf8');
-          allLines = allLines.concat(content.split('\n').filter(l => l.trim()));
-        }
-      }
-
-      if (allLines.length > 0) {
-        return res.json({ success: true, logs: allLines.slice(-lines), total_lines: allLines.length, source: 'pm2' });
-      }
-
-      res.json({ success: true, logs: [], total_lines: 0, source: 'none' });
+      const recent = merged.slice(-lines);
+      return res.json({ success: true, logs: recent, total_lines: merged.length, source: 'file' });
     } catch (error) {
       res.status(500).json({ success: false, message: "Error reading logs", error: error.message });
     }

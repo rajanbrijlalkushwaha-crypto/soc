@@ -9,18 +9,13 @@
  *   { "action": "ping" }
  *
  * Protocol (server → client):
- *   { "type": "full", "symbol": "NIFTY",     "data": { ...fullSnapshot } }
- *   { "type": "diff", "symbol": "NIFTY",     "data": { ...diffOnly } }
+ *   { "type": "full", "symbol": "NIFTY", "data": { ...fullSnapshot } }
+ *   { "type": "diff", "symbol": "NIFTY", "data": { ...diffOnly } }
  *   { "type": "pong" }
  *   { "type": "error", "message": "..." }
  *
- * Scalability:
- *   - Each server process subscribes to Redis channels for the symbols
- *     its connected clients care about.
- *   - Redis Pub/Sub distributes updates across multiple Node processes
- *     (e.g., PM2 cluster mode, multiple servers behind a load-balancer).
- *   - A single Redis channel per symbol (e.g., "WS:NIFTY") carries the
- *     JSON-stringified diff message, broadcast by whichever process computed it.
+ * Live data served from liveserver1 MongoDB (no Redis).
+ * Diffs broadcast directly to connected clients (no Redis pub/sub).
  */
 
 const WebSocket  = require('ws');
@@ -29,76 +24,148 @@ const fs         = require('fs');
 const fsPromises = require('fs').promises;
 const zlib       = require('zlib');
 const { promisify } = require('util');
-const { pub, sub } = require('./redis');
 const liveCache = require('../liveCache');
+const { OptionChain, unpackDoc } = require('../db/models/OptionChain');
+const { LiveServer1 } = require('../db/models/LiveServer1');
 
 const gunzipAsync = promisify(zlib.gunzip);
 
-const WS_PATH       = '/ws';   // WebSocket endpoint path
-const REDIS_PFX     = 'WS:';  // Redis channel prefix  e.g. "WS:NIFTY"
-const FULL_PFX      = 'WS_FULL:'; // Redis key prefix  e.g. "WS_FULL:NIFTY"
-const FULL_TTL      = 120;     // seconds — full data expires if no updates
-const HEARTBEAT_MS  = 30_000;  // ping interval — detect dead connections
+const WS_PATH      = '/ws';
+const HEARTBEAT_MS = 30_000;
 
-// ── State ─────────────────────────────────────────────────────────────────────
 // clients: Map<WebSocket, Set<symbol>>
 const clients = new Map();
 
-// Channels this process is subscribed to in Redis
-const subscribedChannels = new Set();
-
-// ── Redis Pub/Sub → broadcast to WebSocket clients ────────────────────────────
-sub.on('message', (channel, message) => {
-  if (!channel.startsWith(REDIS_PFX)) return;
-  const symbol = channel.slice(REDIS_PFX.length); // "WS:NIFTY" → "NIFTY"
-
-  for (const [ws, syms] of clients) {
-    if (ws.readyState === WebSocket.OPEN && syms.has(symbol)) {
-      ws.send(message); // already JSON-stringified diff message
-    }
-  }
-});
-
-sub.on('error', () => {}); // already handled in redis.js
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Ensure this process is subscribed to the Redis channel for `symbol` */
-async function ensureRedisSubscription(symbol) {
-  const channel = `${REDIS_PFX}${symbol}`;
-  if (!subscribedChannels.has(channel)) {
-    await sub.subscribe(channel);
-    subscribedChannels.add(channel);
-  }
+function ocToChain(rows) {
+  return (rows || []).map(row => ({
+    strike: row.s,
+    call: {
+      pop: row.c?.po||0, theta: row.c?.th||0, gamma: row.c?.ga||0,
+      vega: row.c?.ve||0, delta: row.c?.de||0, iv: row.c?.iv||0,
+      oi_change: row.c?.oc||0, oi: row.c?.oi||0, volume: row.c?.v||0,
+      ltp: row.c?.lp||0, ltp_change: row.c?.lc||0
+    },
+    put: {
+      pop: row.p?.po||0, theta: row.p?.th||0, gamma: row.p?.ga||0,
+      vega: row.p?.ve||0, delta: row.p?.de||0, iv: row.p?.iv||0,
+      oi_change: row.p?.oc||0, oi: row.p?.oi||0, volume: row.p?.v||0,
+      ltp: row.p?.lp||0, ltp_change: row.p?.lc||0
+    }
+  }));
 }
 
 /**
- * Load latest snapshot from disk for a symbol — fully async, never blocks event loop.
- * Scans Data/{symbol}/{expiry}/{date}/ for the newest .json.gz file.
+ * Load latest snapshot for a symbol.
+ * Priority: liveserver1 MongoDB → OptionChain MongoDB → disk.
+ * Warms liveCache Map (without writing back to liveserver1).
  */
-async function loadLatestFromDisk(symbol) {
+async function loadLatestSnapshot(symbol) {
+  const sym = symbol.toUpperCase();
+
+  // ── 0. liveserver1 (uncompressed, one doc per symbol — fastest) ──────────
+  try {
+    const live = await LiveServer1.findOne({ symbol: sym }).lean();
+    if (live) {
+      const snap = {
+        symbol:             live.symbol,
+        expiry:             live.expiry             || '',
+        date:               live.date               || '',
+        time:               live.time               || '',
+        spot_price:         live.spot_price         || 0,
+        spot_prev_close:    live.spot_prev_close    || 0,
+        spot_change:        live.spot_change        || 0,
+        spot_pct_change:    live.spot_pct_change    || 0,
+        futures_ltp:        live.futures_ltp        || 0,
+        futures_prev_close: live.futures_prev_close || 0,
+        futures_change:     live.futures_change     || 0,
+        futures_pct_change: live.futures_pct_change || 0,
+        lot_size:           live.lot_size           || 1,
+        chain:              live.chain              || [],
+        chains:             live.chains             || {},
+        availableExpiries:  live.availableExpiries  || [],
+        currentExpiry:      live.currentExpiry      || live.expiry || '',
+        nextExpiry:         live.nextExpiry         || null,
+        isExpiryDay:        live.isExpiryDay        || false,
+      };
+      liveCache.setFromDB(sym, snap); // warm Map only, no write-back
+      return snap;
+    }
+  } catch (_) {}
+
+  // ── 1. MongoDB OptionChain (compressed, historical) ──────────────────────
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const latestPerExpiry = await OptionChain.aggregate([
+      { $match: { symbol: sym } },
+      { $sort:  { ts: -1 } },
+      { $group: { _id: '$expiry', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } },
+      { $sort: { expiry: 1 } },
+    ]);
+
+    if (latestPerExpiry.length > 0) {
+      const primary    = latestPerExpiry.find(d => d.expiry >= today) || latestPerExpiry[0];
+      const primaryDoc = unpackDoc(primary);
+      const chain      = ocToChain(primaryDoc.oc);
+
+      const chains            = {};
+      const availableExpiries = [];
+      for (const raw of latestPerExpiry) {
+        const d = unpackDoc(raw);
+        if (!d || d.expiry < today) continue;
+        availableExpiries.push(d.expiry);
+        chains[d.expiry] = ocToChain(d.oc);
+      }
+      if (!availableExpiries.includes(primaryDoc.expiry)) availableExpiries.unshift(primaryDoc.expiry);
+      availableExpiries.sort();
+      if (!chains[primaryDoc.expiry]) chains[primaryDoc.expiry] = chain;
+
+      const snap = {
+        symbol:             sym,
+        expiry:             primaryDoc.expiry,
+        date:               primaryDoc.date,
+        time:               primaryDoc.time,
+        spot_price:         primaryDoc.m?.spot_price      || 0,
+        lot_size:           primaryDoc.m?.lot_size        || 1,
+        spot_prev_close:    primaryDoc.m?.spot_prev_close || 0,
+        spot_change:        primaryDoc.m?.spot_change     || 0,
+        spot_pct_change:    primaryDoc.m?.spot_pct_change || 0,
+        futures_ltp:        primaryDoc.m?.futures_ltp     || 0,
+        futures_prev_close: primaryDoc.m?.futures_prev    || 0,
+        futures_change:     primaryDoc.m?.futures_change  || 0,
+        futures_pct_change: primaryDoc.m?.futures_pct     || 0,
+        chain,
+        chains,
+        availableExpiries,
+        currentExpiry:      primaryDoc.expiry,
+        nextExpiry:         availableExpiries[1] || null,
+      };
+      liveCache.setFromDB(sym, snap);
+      return snap;
+    }
+  } catch (_) {}
+
+  // ── 2. Disk fallback ──────────────────────────────────────────────────────
   try {
     const dataDir = path.join(__dirname, '..', 'Data');
     if (!fs.existsSync(dataDir)) return null;
 
-    // Case-insensitive folder match
-    const symLower  = symbol.toLowerCase();
+    const symLower  = sym.toLowerCase();
     const entries   = await fsPromises.readdir(dataDir);
     const symFolder = entries.find(d => d.toLowerCase() === symLower);
     if (!symFolder) return null;
 
     const symPath = path.join(dataDir, symFolder);
     const today   = new Date().toISOString().split('T')[0];
-
-    // Pick nearest future expiry (or most recent past)
     const expDirs  = await fsPromises.readdir(symPath);
     const expiries = (await Promise.all(expDirs.map(async e => {
       const s = await fsPromises.stat(path.join(symPath, e)).catch(() => null);
       return s?.isDirectory() ? e : null;
     }))).filter(Boolean).sort();
 
-    const future = expiries.filter(e => e >= today);
-    const expiry = future[0] || expiries.at(-1);
+    const expiry = (expiries.filter(e => e >= today)[0]) || expiries.at(-1);
     if (!expiry) return null;
 
     const expPath  = path.join(symPath, expiry);
@@ -113,115 +180,86 @@ async function loadLatestFromDisk(symbol) {
 
     const datePath = path.join(expPath, dateDir);
     const allFiles = await fsPromises.readdir(datePath);
-    const files    = allFiles.filter(f => f.endsWith('.json.gz') || f.endsWith('.json')).sort();
-    const latest   = files.at(-1);
+    const gzFiles  = allFiles.filter(f => f.endsWith('.json.gz') || f.endsWith('.json')).sort();
+    const latest   = gzFiles.at(-1);
     if (!latest) return null;
 
-    const filePath = path.join(datePath, latest);
-    const buf      = await fsPromises.readFile(filePath);
-    let raw;
-    if (latest.endsWith('.gz')) {
-      raw = JSON.parse((await gunzipAsync(buf)).toString());
-    } else {
-      raw = JSON.parse(buf.toString('utf8'));
-    }
-
-    // Transform compressed format (short keys from compressChainData) to frontend snapshot
-    // Saved format: { s: strike, u: spot, c: { po,th,ga,ve,de,iv,oc,oi,v,lp,lc }, p: {...} }
-    const rows      = raw.oc || [];
-    const spotPrice = rows[0]?.u || 0;
-    const chain     = rows.map(row => ({
-      strike: row.s,
-      call: {
-        pop: row.c?.po||0, theta: row.c?.th||0, gamma: row.c?.ga||0,
-        vega: row.c?.ve||0, delta: row.c?.de||0, iv: row.c?.iv||0,
-        oi_change: row.c?.oc||0,
-        oi: row.c?.oi||0, volume: row.c?.v||0,
-        ltp: row.c?.lp||0, ltp_change: row.c?.lc||0
-      },
-      put: {
-        pop: row.p?.po||0, theta: row.p?.th||0, gamma: row.p?.ga||0,
-        vega: row.p?.ve||0, delta: row.p?.de||0, iv: row.p?.iv||0,
-        oi_change: row.p?.oc||0,
-        oi: row.p?.oi||0, volume: row.p?.v||0,
-        ltp: row.p?.lp||0, ltp_change: row.p?.lc||0
-      }
-    }));
+    const buf = await fsPromises.readFile(path.join(datePath, latest));
+    const raw = JSON.parse((latest.endsWith('.gz') ? (await gunzipAsync(buf)) : buf).toString());
+    const chain = ocToChain(raw.oc || []);
 
     const snap = {
       symbol:     symFolder,
       expiry,
       date:       raw.m?.fi?.split(' ')[0] || dateDir,
-      time:       raw.m?.time_hhmmss || '00:00:00',
-      spot_price: spotPrice,
+      time:       raw.m?.time_hhmmss       || '00:00:00',
+      spot_price: raw.oc?.[0]?.u           || 0,
+      lot_size:   raw.m?.lot_size          || 1,
       chain,
-      fromDisk:   true   // flag so client knows it's historical
     };
-
-    // Warm liveCache and Redis so next request is instant
-    liveCache.set(symbol, snap);
-    pub.setex(`${FULL_PFX}${symbol}`, FULL_TTL, JSON.stringify(snap)).catch(() => {});
-
+    liveCache.setFromDB(sym, snap);
     return snap;
   } catch (_) {
     return null;
   }
 }
 
-/** Send full snapshot to one WebSocket client — Redis → liveCache → disk */
+/** Send full snapshot to one WebSocket client */
 async function sendFull(ws, symbol) {
   try {
-    // 1. Redis (fastest — already serialised)
-    const raw = await pub.get(`${FULL_PFX}${symbol}`);
-    if (raw) {
-      ws.send(JSON.stringify({ type: 'full', symbol, data: JSON.parse(raw) }));
-      return;
-    }
-
-    // 2. liveCache (in-process RAM)
+    // 1. liveCache Map (zero latency, sync)
     if (liveCache.has(symbol)) {
-      const snap = liveCache.get(symbol);
-      pub.setex(`${FULL_PFX}${symbol}`, FULL_TTL, JSON.stringify(snap)).catch(() => {});
-      ws.send(JSON.stringify({ type: 'full', symbol, data: snap }));
+      ws.send(JSON.stringify({ type: 'full', symbol, data: liveCache.get(symbol) }));
       return;
     }
-
-    // 3. Disk — read latest .json.gz (also warms liveCache + Redis for next time)
-    const snap = loadLatestFromDisk(symbol);
+    // 2. liveserver1 MongoDB / disk fallback (warms liveCache for next request)
+    const snap = await loadLatestSnapshot(symbol);
     if (snap) {
       ws.send(JSON.stringify({ type: 'full', symbol, data: snap }));
       return;
     }
-
     ws.send(JSON.stringify({ type: 'error', message: `No data for ${symbol} yet` }));
-  } catch (e) {
+  } catch (_) {
     ws.send(JSON.stringify({ type: 'error', message: 'Failed to load snapshot' }));
+  }
+}
+
+/** Broadcast full snapshot to all clients subscribed to symbol (called by upstoxWs) */
+function broadcastFull(symbol, full) {
+  const sym = symbol.toUpperCase();
+  const msg = JSON.stringify({ type: 'full', symbol: sym, data: full });
+  for (const [ws, syms] of clients) {
+    if (ws.readyState === WebSocket.OPEN && syms.has(sym)) {
+      ws.send(msg);
+    }
+  }
+}
+
+/**
+ * Publish diff to all subscribers directly (no Redis).
+ * liveCache.set() already upserted to liveserver1, so no extra DB write here.
+ */
+async function publishUpdate(symbol, full, diff) {
+  const sym = symbol.toUpperCase();
+  if (!diff) return;
+  const msg = JSON.stringify({ type: 'diff', symbol: sym, data: diff });
+  for (const [ws, syms] of clients) {
+    if (ws.readyState === WebSocket.OPEN && syms.has(sym)) {
+      ws.send(msg);
+    }
   }
 }
 
 // ── Main setup ────────────────────────────────────────────────────────────────
 
-/**
- * Attach WebSocket server to the existing HTTP server.
- * Call this once after httpServer is created.
- *
- * @param {import('http').Server} httpServer
- */
 function setupWebSocket(httpServer) {
   const wss = new WebSocket.Server({ server: httpServer, path: WS_PATH });
 
-  // ── Server-side heartbeat — detect and evict dead connections ─────────────
-  // A client that drops off the network won't trigger 'close'. Without this,
-  // dead connections pile up in the clients Map and waste memory + send attempts.
   const heartbeatTimer = setInterval(() => {
     for (const [ws] of clients) {
-      if (!ws.isAlive) {
-        clients.delete(ws);
-        ws.terminate();
-        return;
-      }
+      if (!ws.isAlive) { clients.delete(ws); ws.terminate(); return; }
       ws.isAlive = false;
-      ws.ping();    // browser responds automatically with pong
+      ws.ping();
     }
   }, HEARTBEAT_MS);
 
@@ -229,8 +267,7 @@ function setupWebSocket(httpServer) {
 
   wss.on('connection', (ws) => {
     ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });   // reset liveness flag on pong
-
+    ws.on('pong', () => { ws.isAlive = true; });
     clients.set(ws, new Set());
 
     ws.on('message', async (raw) => {
@@ -240,90 +277,66 @@ function setupWebSocket(httpServer) {
       const { action } = msg;
       const symbol = msg.symbol?.toUpperCase().replace(/\s+/g, '_');
 
-      if (action === 'ping') {
-        ws.send(JSON.stringify({ type: 'pong' }));
-        return;
-      }
-
+      if (action === 'ping') { ws.send(JSON.stringify({ type: 'pong' })); return; }
       if (!symbol) return;
 
       if (action === 'subscribe') {
         const subs = clients.get(ws);
         if (!subs) return;
         subs.add(symbol);
-
-        // Subscribe this process to the Redis channel (idempotent)
-        await ensureRedisSubscription(symbol).catch(() => {});
-
-        // Send full snapshot immediately so the client has a baseline
         await sendFull(ws, symbol);
-
       } else if (action === 'unsubscribe') {
         clients.get(ws)?.delete(symbol);
       }
     });
 
-    ws.on('close', () => {
-      clients.delete(ws);
-    });
-
-    ws.on('error', () => {
-      clients.delete(ws);
-    });
+    ws.on('close', () => { clients.delete(ws); });
+    ws.on('error', () => { clients.delete(ws); });
   });
 
   console.log(`[WS] WebSocket server ready at ws://..${WS_PATH}`);
   return wss;
 }
 
-// ── Called by data pipeline (server.js) when new snapshot arrives ─────────────
+// Priority symbols warmed first in parallel
+const WARM_PRIORITY = ['NIFTY_50', 'BANKNIFTY', 'MIDCPNIFTY', 'FINNIFTY', 'SENSEX', 'BANKEX', 'NIFTY_NEXT_50'];
 
-/**
- * Store full snapshot in Redis and publish diff to all subscribers.
- * Called every ~5 s per symbol by saveOptionChainData().
- *
- * @param {string} symbol   - e.g. "NIFTY_50" (UPPERCASE)
- * @param {object} full     - complete snapshot object
- * @param {object|null} diff - minimal diff vs previous snapshot (null = no change)
- */
-async function publishUpdate(symbol, full, diff) {
-  const sym = symbol.toUpperCase();
+async function warmAllSymbols() {
+  let symbols = [];
+  try {
+    const dbSyms = await OptionChain.distinct('symbol');
+    symbols = [...new Set(dbSyms)];
+  } catch (_) {}
 
-  // Always refresh full snapshot in Redis (keeps TTL alive)
-  await pub.setex(`${FULL_PFX}${sym}`, FULL_TTL, JSON.stringify(full));
-
-  // Only publish if something actually changed (avoids empty WebSocket frames)
-  if (!diff) return;
-
-  const msg = JSON.stringify({ type: 'diff', symbol: sym, data: diff });
-  await pub.publish(`${REDIS_PFX}${sym}`, msg);
-}
-
-/**
- * On startup: scan Data/ for ALL symbol folders, load latest .json.gz for each,
- * warm liveCache + Redis so every symbol is ready before any user connects.
- * Old Redis keys for a symbol are overwritten each time new data arrives (TTL=120s).
- */
-async function warmAllSymbolsFromDisk() {
   const dataDir = path.join(__dirname, '..', 'Data');
-  if (!fs.existsSync(dataDir)) return;
+  if (fs.existsSync(dataDir)) {
+    const diskSyms = fs.readdirSync(dataDir)
+      .filter(d => { try { return fs.statSync(path.join(dataDir, d)).isDirectory(); } catch { return false; } })
+      .map(d => d.toUpperCase());
+    symbols = [...new Set([...symbols, ...diskSyms])];
+  }
 
-  const symFolders = fs.readdirSync(dataDir).filter(d => {
-    try { return fs.statSync(path.join(dataDir, d)).isDirectory(); } catch { return false; }
-  });
+  const priority = WARM_PRIORITY.filter(s => symbols.includes(s));
+  const rest     = symbols.filter(s => !WARM_PRIORITY.includes(s));
 
-  let loaded = 0;
-  // Process one symbol per event-loop tick — never blocks the server
-  for (const folder of symFolders) {
-    await new Promise(resolve => setImmediate(resolve));   // yield to event loop
-    const symbol = folder.toUpperCase();
-    const snap   = loadLatestFromDisk(symbol);
+  const priSnaps = await Promise.all(priority.map(async sym => {
+    const snap = await loadLatestSnapshot(sym);
+    if (snap) console.log(`[WS] ✅ Warmed ${sym} (${snap.chain?.length || 0} strikes)`);
+    return snap ? 1 : 0;
+  }));
+  let loaded = priSnaps.reduce((a, b) => a + b, 0);
+
+  for (const symbol of rest) {
+    await new Promise(resolve => setImmediate(resolve));
+    const snap = await loadLatestSnapshot(symbol);
     if (snap) {
       loaded++;
-      console.log(`[WS] ✅ Warmed ${symbol} from disk (${snap.chain?.length || 0} strikes)`);
+      console.log(`[WS] ✅ Warmed ${symbol} (${snap.chain?.length || 0} strikes)`);
     }
   }
-  console.log(`[WS] Disk warm-up done: ${loaded}/${symFolders.length} symbols ready in Redis`);
+  console.log(`[WS] Warm-up done: ${loaded}/${symbols.length} symbols ready`);
 }
 
-module.exports = { setupWebSocket, publishUpdate, warmAllSymbolsFromDisk };
+const warmAllSymbolsFromDisk = warmAllSymbols;
+
+module.exports = { setupWebSocket, publishUpdate, warmAllSymbolsFromDisk, broadcastFull };

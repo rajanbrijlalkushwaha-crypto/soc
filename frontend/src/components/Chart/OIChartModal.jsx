@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import './OIChartModal.css';
 
@@ -16,10 +16,12 @@ const STRIKE_STYLE = [
 ];
 
 function MultiLineChart({ chartData, selectedStrike, activeMetrics, showCall, showPut, showCompare, cutoffTime }) {
+  const [hover, setHover] = useState(null);
+  const svgRef = useRef(null);
+
   const allStrikes = Object.keys(chartData.strikes || {}).map(Number).sort((a, b) => a - b);
   const selIdx     = allStrikes.indexOf(Number(selectedStrike));
 
-  // Only show selected strike unless compare is on
   const compStrikes = [];
   if (showCompare) {
     for (let d = -3; d <= 3; d++) {
@@ -78,30 +80,92 @@ function MultiLineChart({ chartData, selectedStrike, activeMetrics, showCall, sh
     });
   });
 
+  const handleMouseMove = (e) => {
+    const el = svgRef.current;
+    if (!el || n === 0) return;
+    const rect = el.getBoundingClientRect();
+    const rawX = (e.clientX - rect.left) / rect.width;
+    const svgX = rawX * W;
+    if (svgX < mg.left || svgX > W - mg.right) { setHover(null); return; }
+    const idx = n > 1 ? Math.max(0, Math.min(n - 1, Math.round(((svgX - mg.left) / cW) * (n - 1)))) : 0;
+    setHover({ idx, pctX: rawX * 100 });
+  };
+
+  const tooltipRows = [];
+  if (hover !== null && times[hover.idx]) {
+    const t = times[hover.idx];
+    const sd = chartData.strikes[selectedStrike];
+    if (sd) {
+      const callMap = showCall ? Object.fromEntries((sd.call || []).map(d => [d.time, d])) : null;
+      const putMap  = showPut  ? Object.fromEntries((sd.put  || []).map(d => [d.time, d])) : null;
+      METRICS.forEach(m => {
+        if (!activeMetrics[m.key]) return;
+        const cVal = callMap ? Number(callMap[t]?.[m.key] ?? 0) : null;
+        const pVal = putMap  ? Number(putMap[t]?.[m.key]  ?? 0) : null;
+        const diff = (cVal !== null && pVal !== null && m.key === 'oichng_pct') ? (pVal - cVal) : null;
+        tooltipRows.push({ label: m.label, color: m.color, call: cVal, put: pVal, diff });
+      });
+    }
+  }
+
+  const hoverLineX = hover !== null ? xS(hover.idx) : null;
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="oic-svg">
-      <text x={W / 2} y={H / 2 - 10} textAnchor="middle" fontSize="28" fontWeight="900"
-        fill="#64748b" opacity="0.07" transform={`rotate(-20,${W/2},${H/2})`}>
-        SOC.AI.IN
-      </text>
-      {yTicks.map(v => (
-        <line key={v} x1={mg.left} x2={W - mg.right} y1={yS(v)} y2={yS(v)}
-          stroke={v === 50 ? '#94a3b8' : '#e2e8f0'}
-          strokeWidth={v === 50 ? 1.2 : 1}
-          strokeDasharray={v === 50 ? '6 4' : '4 3'}
-        />
-      ))}
-      {lines}
-      <line x1={mg.left} x2={mg.left} y1={mg.top} y2={H - mg.bottom} stroke="#94a3b8" />
-      <line x1={mg.left} x2={W - mg.right} y1={H - mg.bottom} y2={H - mg.bottom} stroke="#94a3b8" />
-      {yTicks.map(v => (
-        <text key={v} x={mg.left - 6} y={yS(v) + 4} textAnchor="end" fontSize="10" fill="#64748b">{v}%</text>
-      ))}
-      {xTicks.map(t => {
-        const i = times.indexOf(t);
-        return <text key={t} x={xS(i)} y={H - mg.bottom + 14} textAnchor="middle" fontSize="9" fill="#64748b">{t}</text>;
-      })}
-    </svg>
+    <div style={{ position: 'relative' }}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="oic-svg"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setHover(null)}
+      >
+        <text x={W / 2} y={H / 2 - 10} textAnchor="middle" fontSize="28" fontWeight="900"
+          fill="#64748b" opacity="0.07" transform={`rotate(-20,${W/2},${H/2})`}>
+          SOC.AI.IN
+        </text>
+        {yTicks.map(v => (
+          <line key={v} x1={mg.left} x2={W - mg.right} y1={yS(v)} y2={yS(v)}
+            stroke={v === 50 ? '#94a3b8' : '#e2e8f0'}
+            strokeWidth={v === 50 ? 1.2 : 1}
+            strokeDasharray={v === 50 ? '6 4' : '4 3'}
+          />
+        ))}
+        {lines}
+        <line x1={mg.left} x2={mg.left} y1={mg.top} y2={H - mg.bottom} stroke="#94a3b8" />
+        <line x1={mg.left} x2={W - mg.right} y1={H - mg.bottom} y2={H - mg.bottom} stroke="#94a3b8" />
+        {yTicks.map(v => (
+          <text key={v} x={mg.left - 6} y={yS(v) + 4} textAnchor="end" fontSize="10" fill="#64748b">{v}%</text>
+        ))}
+        {xTicks.map(t => {
+          const i = times.indexOf(t);
+          return <text key={t} x={xS(i)} y={H - mg.bottom + 14} textAnchor="middle" fontSize="9" fill="#64748b">{t}</text>;
+        })}
+        {hoverLineX !== null && (
+          <line x1={hoverLineX} x2={hoverLineX} y1={mg.top} y2={H - mg.bottom}
+            stroke="#64748b" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.7" />
+        )}
+      </svg>
+      {hover !== null && tooltipRows.length > 0 && (
+        <div className="oic-hover-tt" style={{
+          left:  hover.pctX <= 60 ? `${hover.pctX}%` : 'auto',
+          right: hover.pctX >  60 ? `${100 - hover.pctX}%` : 'auto',
+        }}>
+          <div className="oic-tt-time">{times[hover.idx]}</div>
+          {tooltipRows.map(r => (
+            <div key={r.label} className="oic-tt-row">
+              <span className="oic-tt-dot" style={{ background: r.color }} />
+              <span className="oic-tt-lbl">{r.label}</span>
+              <span className="oic-tt-vals">
+                {r.call !== null && <span className="oic-tt-val">C: {r.call.toFixed(1)}%</span>}
+                {r.put  !== null && <span className="oic-tt-val">P: {r.put.toFixed(1)}%</span>}
+                {r.diff !== null && (
+                  <span className={`oic-tt-diff ${r.diff >= 0 ? 'pos' : 'neg'}`}>
+                    Δ {r.diff > 0 ? '+' : ''}{r.diff.toFixed(1)}%
+                  </span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

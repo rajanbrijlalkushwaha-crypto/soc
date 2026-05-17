@@ -42,11 +42,16 @@ export default function SymbolSelect() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Sort: favorites first, then alphabetical
+  const INDEX_ORDER = ['NIFTY', 'BANKNIFTY', 'MIDCPNIFTY', 'FINNIFTY', 'SENSEX', 'BANKEX'];
+  // Sort: favorites first, then indices in defined order, then stocks alphabetically
   const sorted = [...state.symbols].sort((a, b) => {
     const af = favs.includes(a), bf = favs.includes(b);
     if (af && !bf) return -1;
     if (!af && bf) return 1;
+    const ai = INDEX_ORDER.indexOf(a), bi = INDEX_ORDER.indexOf(b);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
     return a.localeCompare(b);
   });
 

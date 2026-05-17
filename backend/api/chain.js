@@ -2,8 +2,87 @@
 const fs = require("fs");
 const path = require("path");
 const zlib = require('zlib');
+const { promisify } = require('util');
 const liveCache = require('../liveCache');
 const { PATHS } = require('../config/paths');
+const { OptionChain, unpackDoc } = require('../db/models/OptionChain');
+
+const gzipAsync = promisify(zlib.gzip);
+
+// ── Configured symbol order (set by server.js after init) ────────────────────
+let _configuredSymbols = null; // ordered list from instruments.json, e.g. ['NIFTY','BANKNIFTY',...]
+const INDEX_ORDER = ['NIFTY', 'BANKNIFTY', 'MIDCPNIFTY', 'FINNIFTY', 'SENSEX', 'BANKEX'];
+
+function sortSymbols(syms) {
+  return [...syms].sort((a, b) => {
+    const au = a.toUpperCase(), bu = b.toUpperCase();
+    const ai = INDEX_ORDER.indexOf(au), bi = INDEX_ORDER.indexOf(bu);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return au.localeCompare(bu);
+  });
+}
+
+function getLiveSymbolsOrdered() {
+  const all = [...liveCache.entries()].map(([k]) => k.toUpperCase());
+  if (_configuredSymbols && _configuredSymbols.length) {
+    const liveSet = new Set(all);
+    return _configuredSymbols.filter(s => liveSet.has(s.toUpperCase()));
+  }
+  return sortSymbols(all);
+}
+
+// ── Pre-gzip response cache ───────────────────────────────────────────────────
+// After each data cycle, we gzip the JSON once and store the Buffer.
+// When 100 users hit /api/live/:symbol simultaneously, they all get the same
+// pre-computed Buffer — zero CPU cost per request.
+const _liveGzipCache  = new Map(); // symbol → Buffer
+let   _prefetchGzip   = null;      // Buffer for /api/prefetch response
+let   _prefetchBuildPending = false;
+
+async function refreshLiveGzip(symbol, data) {
+  try {
+    const buf = await gzipAsync(JSON.stringify(data));
+    _liveGzipCache.set(symbol, buf);
+  } catch (_) {}
+}
+
+async function refreshPrefetchGzip() {
+  if (_prefetchBuildPending) return;
+  _prefetchBuildPending = true;
+  try {
+    // Small delay so all symbols finish saving before we snapshot prefetch
+    await new Promise(r => setTimeout(r, 200));
+    const dataDir = PATHS.MARKET;
+    let liveSymbols = getLiveSymbolsOrdered();
+    if (!liveSymbols.length && fs.existsSync(dataDir)) {
+      liveSymbols = sortSymbols(
+        fs.readdirSync(dataDir, { withFileTypes: true })
+          .filter(d => d.isDirectory()).map(d => d.name.toUpperCase())
+      );
+    }
+    const allSymbols = fs.existsSync(dataDir)
+      ? fs.readdirSync(dataDir, { withFileTypes: true })
+          .filter(d => d.isDirectory())
+          .filter(d => /^[A-Z0-9_]+$/.test(d.name)) // only valid ALL-CAPS symbol names
+          .map(d => d.name)
+      : [];
+    const firstSym = liveSymbols[0] || null;
+    const liveData = firstSym ? (liveCache.get(firstSym) || null) : null;
+    const payload  = JSON.stringify({ liveSymbols, allSymbols, liveData, firstSymbol: firstSym });
+    _prefetchGzip  = await gzipAsync(payload);
+  } catch (_) {
+  } finally {
+    _prefetchBuildPending = false;
+  }
+}
+
+// Called by server.js after each symbol save — refreshes both caches
+function notifyLiveCacheUpdated(symbol, data) {
+  refreshLiveGzip(symbol, data).catch(() => {});
+  refreshPrefetchGzip().catch(() => {});
+}
 
 function resolveSymbol(sym) {
   return String(sym).toUpperCase().replace(/\s+/g, '_');
@@ -128,7 +207,14 @@ function readOptionChainFile(filePath) {
           source: compressedJson.m?.s,
           timezone: compressedJson.m?.tz,
           lot_size: compressedJson.m?.lot_size || 1,
-          time_hhmmss: compressedJson.m?.time_hhmmss
+          time_hhmmss: compressedJson.m?.time_hhmmss,
+          spot_prev_close: compressedJson.m?.spot_prev_close || 0,
+          spot_change:     compressedJson.m?.spot_change     || 0,
+          spot_pct_change: compressedJson.m?.spot_pct_change || 0,
+          futures_ltp:     compressedJson.m?.futures_ltp     || 0,
+          futures_prev:    compressedJson.m?.futures_prev    || 0,
+          futures_change:  compressedJson.m?.futures_change  || 0,
+          futures_pct:     compressedJson.m?.futures_pct     || 0
         },
         analysis: compressedJson.a,
         option_chain: decompressChainData(compressedJson.oc || [])
@@ -154,41 +240,248 @@ function safeReadJson(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch(_) { return null; }
 }
 
+// ── Load a single symbol's latest snapshot from disk → populates liveCache ──
+// Exported so server.js can call this at startup to pre-warm every symbol.
+function loadLiveFromDisk(symbol) {
+  const safeSymbol = resolveSymbol(symbol);
+  const dataDir    = PATHS.MARKET;
+  const lowerReq   = safeSymbol.toLowerCase();
+
+  if (!fs.existsSync(dataDir)) return null;
+  const actualFolder = fs.readdirSync(dataDir).find(d => d.toLowerCase() === lowerReq);
+  if (!actualFolder) return null;
+
+  const symbolPath    = path.join(dataDir, actualFolder);
+  const expiryFolders = folders(symbolPath).sort();
+  if (!expiryFolders.length) return null;
+
+  const today         = new Date().toISOString().split('T')[0];
+  const futureExp     = expiryFolders.filter(e => e >= today);
+  const selectedExpiry = futureExp[0] || expiryFolders.at(-1);
+
+  const dateFolders = folders(path.join(symbolPath, selectedExpiry)).sort();
+  if (!dateFolders.length) return null;
+  const latestDate = dateFolders.at(-1);
+  const datePath   = path.join(symbolPath, selectedExpiry, latestDate);
+
+  const jsonFiles = files(datePath).sort();
+  if (!jsonFiles.length) return null;
+  const filePath = path.join(datePath, jsonFiles.at(-1));
+
+  const data = readOptionChainFile(filePath);
+  if (!data.option_chain?.length) return null;
+
+  const spotPrice  = data.option_chain[0].underlying_spot_price || 0;
+  const timeHHMMSS = data.metadata?.time_hhmmss || parseTimeFromFilename(jsonFiles.at(-1));
+
+  const futureExpiries = expiryFolders.filter(e => e >= today).sort();
+  const isExpiryDay   = futureExpiries[0] === today;
+
+  const mapRow = (row) => {
+    const cc = row.call_options?.market_data   || {};
+    const pc = row.put_options?.market_data    || {};
+    const cg = row.call_options?.option_greeks || {};
+    const pg = row.put_options?.option_greeks  || {};
+    return {
+      strike: row.strike_price,
+      call: { pop: cg.pop||0, theta: cg.theta||0, gamma: cg.gamma||0, vega: cg.vega||0,
+              delta: cg.delta||0, iv: cg.iv||0,
+              oi_change: (cc.oi||0)-(cc.prev_oi||0), oi: cc.oi||0, volume: cc.volume||0,
+              ltp: cc.ltp||0, ltp_change: (cc.ltp||0)-(cc.close_price||0) },
+      put:  { pop: pg.pop||0, theta: pg.theta||0, gamma: pg.gamma||0, vega: pg.vega||0,
+              delta: pg.delta||0, iv: pg.iv||0,
+              oi_change: (pc.oi||0)-(pc.prev_oi||0), oi: pc.oi||0, volume: pc.volume||0,
+              ltp: pc.ltp||0, ltp_change: (pc.ltp||0)-(pc.close_price||0) },
+    };
+  };
+
+  const chain = data.option_chain.map(mapRow);
+
+  // Build chains for all available future expiries so expiry dropdown is populated
+  const chains = { [selectedExpiry]: chain };
+  const availableExpiries = futureExpiries.length > 0 ? futureExpiries : [selectedExpiry];
+  for (const exp of futureExpiries) {
+    if (exp === selectedExpiry) continue;
+    try {
+      const expDates = folders(path.join(symbolPath, exp)).sort();
+      const expLatestDate = expDates.at(-1);
+      if (!expLatestDate) continue;
+      const expFiles = files(path.join(symbolPath, exp, expLatestDate)).sort();
+      if (!expFiles.length) continue;
+      const expData = readOptionChainFile(path.join(symbolPath, exp, expLatestDate, expFiles.at(-1)));
+      if (expData.option_chain?.length) chains[exp] = expData.option_chain.map(mapRow);
+    } catch (_) {}
+  }
+
+  const snap = {
+    symbol: safeSymbol, expiry: selectedExpiry, date: latestDate, time: timeHHMMSS,
+    spot_price: spotPrice, lot_size: data.metadata?.lot_size || 1,
+    spot_prev_close:    data.metadata?.spot_prev_close  || 0,
+    spot_change:        data.metadata?.spot_change      || 0,
+    spot_pct_change:    data.metadata?.spot_pct_change  || 0,
+    futures_ltp:        data.metadata?.futures_ltp      || 0,
+    futures_prev_close: data.metadata?.futures_prev     || 0,
+    futures_change:     data.metadata?.futures_change   || 0,
+    futures_pct_change: data.metadata?.futures_pct      || 0,
+    chain, chains, isExpiryDay,
+    currentExpiry:    futureExpiries[0] || selectedExpiry,
+    nextExpiry:       futureExpiries[1] || null,
+    availableExpiries,
+  };
+
+  liveCache.set(safeSymbol, snap);
+  return snap;
+}
+
+/**
+ * Async version of loadLiveFromDisk that queries MongoDB first.
+ * Accepts an optional pre-fetched doc to avoid a redundant DB query.
+ * Called by server.js startup warm and exported for external use.
+ */
+async function loadLiveFromDB(symbol, preloadedDoc) {
+  try {
+    const safeSymbol = resolveSymbol(symbol);
+    const doc = unpackDoc(preloadedDoc || await OptionChain.findOne({ symbol: safeSymbol }).sort({ ts: -1 }).lean());
+    if (!doc) return null;
+
+    const optionChain = decompressChainData(doc.oc || []);
+    if (!optionChain.length) return null;
+
+    const spotPrice  = optionChain[0]?.underlying_spot_price || doc.m?.spot_price || 0;
+    const timeHHMMSS = doc.m?.time_hhmmss || doc.time || '00:00:00';
+
+    const chain = optionChain.map(row => {
+      const cc = row.call_options?.market_data  || {};
+      const pc = row.put_options?.market_data   || {};
+      const cg = row.call_options?.option_greeks || {};
+      const pg = row.put_options?.option_greeks  || {};
+      return {
+        strike: row.strike_price,
+        call: { pop: cg.pop||0, theta: cg.theta||0, gamma: cg.gamma||0, vega: cg.vega||0,
+                delta: cg.delta||0, iv: cg.iv||0,
+                oi_change: (cc.oi||0)-(cc.prev_oi||0), oi: cc.oi||0, volume: cc.volume||0,
+                ltp: cc.ltp||0, ltp_change: (cc.ltp||0)-(cc.close_price||0) },
+        put:  { pop: pg.pop||0, theta: pg.theta||0, gamma: pg.gamma||0, vega: pg.vega||0,
+                delta: pg.delta||0, iv: pg.iv||0,
+                oi_change: (pc.oi||0)-(pc.prev_oi||0), oi: pc.oi||0, volume: pc.volume||0,
+                ltp: pc.ltp||0, ltp_change: (pc.ltp||0)-(pc.close_price||0) },
+      };
+    });
+
+    const snap = {
+      symbol:             safeSymbol,
+      expiry:             doc.expiry,
+      date:               doc.date,
+      time:               timeHHMMSS,
+      spot_price:         spotPrice,
+      lot_size:           doc.m?.lot_size        || 1,
+      spot_prev_close:    doc.m?.spot_prev_close || 0,
+      spot_change:        doc.m?.spot_change     || 0,
+      spot_pct_change:    doc.m?.spot_pct_change || 0,
+      futures_ltp:        doc.m?.futures_ltp     || 0,
+      futures_prev_close: doc.m?.futures_prev    || 0,
+      futures_change:     doc.m?.futures_change  || 0,
+      futures_pct_change: doc.m?.futures_pct     || 0,
+      chain,
+    };
+
+    liveCache.set(safeSymbol, snap);
+    return snap;
+  } catch (_) {
+    return null;
+  }
+}
+
 module.exports = function(app){
 
   // ============ FRONTEND API ENDPOINTS ============
 
+  // ── Pre-fetch: symbols + first symbol's live data in one round trip ─────────
+  // Replaces 3 sequential API calls (symbols → live → signals) with 1.
+  // Critical for first-time users and fast post-restart recovery.
+  app.get('/api/prefetch', (req, res) => {
+    try {
+      // ── Serve pre-gzipped response (built after each data cycle) ────────────
+      const acceptGzip = (req.headers['accept-encoding'] || '').includes('gzip');
+      if (_prefetchGzip && acceptGzip) {
+        res.set({ 'Content-Type': 'application/json', 'Content-Encoding': 'gzip',
+                  'Cache-Control': 'no-store', 'Vary': 'Accept-Encoding' });
+        return res.end(_prefetchGzip);
+      }
+
+      // ── Cold path (first load / no pre-gzip yet) ─────────────────────────────
+      const dataDir  = PATHS.MARKET;
+      let liveSymbols = getLiveSymbolsOrdered();
+      if (!liveSymbols.length && fs.existsSync(dataDir)) {
+        liveSymbols = fs.readdirSync(dataDir, { withFileTypes: true })
+          .filter(d => d.isDirectory()).map(d => d.name.toUpperCase());
+      }
+      const allSymbols = fs.existsSync(dataDir)
+        ? fs.readdirSync(dataDir, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .filter(d => /^[A-Z0-9_]+$/.test(d.name)) // only valid ALL-CAPS symbol names
+            .map(d => d.name)
+        : [];
+      const firstSym = liveSymbols[0] || null;
+      let liveData   = firstSym ? (liveCache.get(firstSym) || null) : null;
+      if (!liveData && firstSym) {
+        try { liveData = loadLiveFromDisk(firstSym); } catch (_) {}
+      }
+      res.set('Cache-Control', 'no-store');
+      res.json({ liveSymbols, allSymbols, liveData, firstSymbol: firstSym });
+    } catch (e) {
+      res.status(500).json({ liveSymbols: [], allSymbols: [], liveData: null, firstSymbol: null });
+    }
+  });
+
+  // Compact spot prices for all live symbols — served from RAM, ~2KB response.
+  // Used by IndexPage for instant initial render and as a polling fallback.
+  app.get('/api/spot-prices', (req, res) => {
+    try {
+      const prices = {};
+      for (const [symbol, snap] of liveCache.entries()) {
+        prices[symbol] = { spot: snap.spot_price || 0, time: snap.time || '--' };
+      }
+      res.set('Cache-Control', 'no-store');
+      res.json({ success: true, prices });
+    } catch (_) {
+      res.status(500).json({ success: false, prices: {} });
+    }
+  });
+
   // Get symbols
   // ?mode=live      → only active instruments (from admin panel config)
-  // ?mode=historical (or no param) → all folders on disk
-app.get("/api/symbols", (req, res) => {
+  // ?mode=historical (or no param) → MongoDB + disk
+app.get("/api/symbols", async (req, res) => {
   try {
     const dataPath = PATHS.MARKET;
     const mode = req.query.mode || 'historical';
 
-    // If Data folder does not exist, return empty array (JSON safe)
-    if (!fs.existsSync(dataPath)) {
+    if (mode === 'live') {
+      const liveSymbols = getLiveSymbolsOrdered();
+      if (liveSymbols.length > 0) return res.json(liveSymbols);
+      // Fallback: disk (sorted)
+      if (fs.existsSync(dataPath)) {
+        const all = sortSymbols(
+          fs.readdirSync(dataPath, { withFileTypes: true })
+            .filter(d => d.isDirectory()).map(d => d.name.toUpperCase())
+        );
+        return res.json(all);
+      }
       return res.json([]);
     }
 
-    if (mode === 'live') {
-      // liveCache keys = exactly the symbols currently being fetched (active instruments)
-      // These are already correct folder names set by saveOptionChainData()
-      const liveSymbols = [...liveCache.entries()].map(([k]) => k.toUpperCase());
-      if (liveSymbols.length > 0) return res.json(liveSymbols);
+    // Historical: MongoDB + disk, merged and deduplicated
+    let dbSymbols = [];
+    try { dbSymbols = await OptionChain.distinct('symbol'); } catch (_) {}
 
-      // liveCache empty (server just started, fetching not begun yet)
-      // Fall back: disk folders — better than empty list
-      const all = fs.readdirSync(dataPath, { withFileTypes: true })
-        .filter(d => d.isDirectory()).map(d => d.name.toUpperCase());
-      return res.json(all);
-    }
+    const diskSymbols = fs.existsSync(dataPath)
+      ? fs.readdirSync(dataPath, { withFileTypes: true })
+          .filter(d => d.isDirectory() && /^[A-Z0-9_]+$/.test(d.name))
+          .map(d => d.name)
+      : [];
 
-    // Historical: all disk folders
-    const symbols = fs.readdirSync(dataPath, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name.toUpperCase());
-
+    const symbols = [...new Set([...dbSymbols, ...diskSymbols])].sort();
     res.setHeader("Content-Type", "application/json");
     res.status(200).json(symbols);
 
@@ -252,202 +545,104 @@ app.get("/api/symbols", (req, res) => {
   });
 
   // Get latest live data for a symbol (with optional expiry selection)
-  app.get("/api/live/:symbol", (req, res) => {
+  app.get("/api/live/:symbol", async (req, res) => {
     try {
-      // Normalize: resolve actual folder name (case-insensitive match against Data/)
-      const safeSymbol = resolveSymbol(req.params.symbol);
-      const requestedExpiry = req.query.expiry; // Optional: specific expiry
+      const safeSymbol      = resolveSymbol(req.params.symbol);
+      const requestedExpiry = req.query.expiry;
 
-      // ── RAM CACHE HIT ──────────────────────────────────────────────────────
-      // liveCache keys are UPPERCASE (e.g. "NIFTY_50") matching resolveSymbol().
+      // ── Pre-gzipped response (fastest — zero CPU per request) ────────────
+      const acceptGzip = (req.headers['accept-encoding'] || '').includes('gzip');
+      if (!requestedExpiry && acceptGzip && _liveGzipCache.has(safeSymbol)) {
+        res.set({ 'Content-Type': 'application/json', 'Content-Encoding': 'gzip',
+                  'Cache-Control': 'no-store', 'Vary': 'Accept-Encoding' });
+        return res.end(_liveGzipCache.get(safeSymbol));
+      }
+
+      // ── RAM cache hit (no expiry override) ───────────────────────────────
       if (!requestedExpiry && liveCache.has(safeSymbol)) {
         return res.json(liveCache.get(safeSymbol));
       }
-      // ── END CACHE HIT ──────────────────────────────────────────────────────
 
-      // Find the latest file for this symbol — scan Data/ for case-insensitive match
-      const dataDir = PATHS.MARKET;
-      const lowerReq = safeSymbol.toLowerCase();
+      // ── MongoDB / Disk fallback (auto-warms liveCache) ──────────────────
+      if (!requestedExpiry) {
+        let snap = await loadLiveFromDB(safeSymbol).catch(() => null);
+        if (!snap) snap = loadLiveFromDisk(safeSymbol);
+        if (!snap) return res.status(404).json({ error: `No data found for symbol: ${safeSymbol}` });
+        try {
+          const { publishUpdate } = require('../ws/websocket');
+          publishUpdate(safeSymbol, snap, null).catch(() => {});
+        } catch (_) {}
+        return res.json(snap);
+      }
+
+      // ── Specific expiry requested — still need the full path scan ────────
+      const dataDir    = PATHS.MARKET;
+      const lowerReq   = safeSymbol.toLowerCase();
       const actualFolder = fs.existsSync(dataDir)
         ? (fs.readdirSync(dataDir).find(d => d.toLowerCase() === lowerReq) || safeSymbol)
         : safeSymbol;
-      const symbolPath = path.join(dataDir, actualFolder);
-      
-      if (!fs.existsSync(symbolPath)) {
-        return res.status(404).json({
-          error: `No data found for symbol: ${safeSymbol}`,
-          suggestions: ["Check if symbol exists", "Data may not be loaded yet"]
-        });
-      }
-      
-      // Get all expiry folders
+      const symbolPath   = path.join(dataDir, actualFolder);
+      if (!fs.existsSync(symbolPath)) return res.status(404).json({ error: `No data for ${safeSymbol}` });
+
       const expiryFolders = folders(symbolPath).sort();
-      
-      if (expiryFolders.length === 0) {
-        return res.status(404).json({ error: "No expiry data found" });
-      }
-      
-      // Get today's date
-      const today = new Date().toISOString().split('T')[0];
-      
-      // Determine which expiry to use
-      let selectedExpiry;
-      
-      if (requestedExpiry) {
-        // User requested specific expiry
-        if (expiryFolders.includes(requestedExpiry)) {
-          selectedExpiry = requestedExpiry;
-        } else {
-          return res.status(404).json({ error: `Expiry ${requestedExpiry} not found` });
-        }
-      } else {
-        // Auto-select: Use latest expiry that is >= today (future or current expiry)
-        // Filter expiries that are >= today, then pick the first (nearest future expiry)
-        const futureExpiries = expiryFolders.filter(exp => exp >= today);
-        
-        if (futureExpiries.length > 0) {
-          // Use the nearest future expiry (first in the filtered list)
-          selectedExpiry = futureExpiries[0];
-        } else {
-          // If no future expiries, use the last (most recent) expiry
-          selectedExpiry = expiryFolders[expiryFolders.length - 1];
-        }
-      }
-      
-      
-      const expiryPath = path.join(symbolPath, selectedExpiry);
-      
-      // Get all date folders
+      if (!expiryFolders.includes(requestedExpiry))
+        return res.status(404).json({ error: `Expiry ${requestedExpiry} not found` });
+
+      const expiryPath  = path.join(symbolPath, requestedExpiry);
       const dateFolders = folders(expiryPath).sort();
-      
-      if (dateFolders.length === 0) {
-        return res.status(404).json({ error: "No date data found" });
-      }
-      
+      if (!dateFolders.length) return res.status(404).json({ error: 'No date data' });
+
       const latestDate = dateFolders.at(-1);
-      
-      const datePath = path.join(expiryPath, latestDate);
-      
-      // Get all JSON files (both compressed and uncompressed)
-      const jsonFiles = files(datePath).sort();
-      
-      if (jsonFiles.length === 0) {
-        return res.status(404).json({ error: "No time data found" });
-      }
-      
-      const latestFile = jsonFiles.at(-1);
-      
-      const filePath = path.join(datePath, latestFile);
-      
-      // Read and parse the file
-      const data = readOptionChainFile(filePath);
-      
-      // Check if option_chain exists
-      if (!data.option_chain || data.option_chain.length === 0) {
-        return res.status(404).json({ error: "No option chain data in file" });
-      }
-      
-      
-      // Extract spot price and time
-      let spotPrice = 0;
-      let timeHHMMSS = "00:00:00";
-      
-      if (data.option_chain && data.option_chain.length > 0) {
-        spotPrice = data.option_chain[0].underlying_spot_price || 0;
-      }
-      
-      // Get time from metadata or filename
-      if (data.metadata && data.metadata.time_hhmmss) {
-        timeHHMMSS = data.metadata.time_hhmmss;
-      } else {
-        timeHHMMSS = parseTimeFromFilename(latestFile);
-      }
-      
-      
-      // Check if today is expiry day and get available expiries
-      const futureExpiries = expiryFolders.filter(exp => exp >= today).sort();
-      const isExpiryDay = futureExpiries[0] === today;
-      
-      // Get expiries that have today's data
-      const expiriesWithTodayData = [];
-      for (const expiry of expiryFolders) {
-        const expPath = path.join(symbolPath, expiry);
-        const dFolders = folders(expPath).sort();
-        if (dFolders.at(-1) === today) {
-          expiriesWithTodayData.push(expiry);
-        }
-      }
-      
-      // Transform data to match frontend format
+      const jsonFiles  = files(path.join(expiryPath, latestDate)).sort();
+      if (!jsonFiles.length) return res.status(404).json({ error: 'No time data' });
+
+      const data = readOptionChainFile(path.join(expiryPath, latestDate, jsonFiles.at(-1)));
+      if (!data.option_chain?.length) return res.status(404).json({ error: 'No chain data' });
+
+      const today = new Date().toISOString().split('T')[0];
+      const futureExpiries = expiryFolders.filter(e => e >= today).sort();
+      const spotPrice  = data.option_chain[0].underlying_spot_price || 0;
+      const timeHHMMSS = data.metadata?.time_hhmmss || parseTimeFromFilename(jsonFiles.at(-1));
+
       const chain = data.option_chain.map(row => {
         const cc = row.call_options?.market_data || {};
-        const pc = row.put_options?.market_data || {};
+        const pc = row.put_options?.market_data  || {};
         const cg = row.call_options?.option_greeks || {};
-        const pg = row.put_options?.option_greeks || {};
-        
+        const pg = row.put_options?.option_greeks  || {};
         return {
           strike: row.strike_price,
-          call: {
-            pop: cg?.pop || 0,
-            theta: cg?.theta || 0,
-            gamma: cg?.gamma || 0,
-            vega: cg?.vega || 0,
-            delta: cg?.delta || 0,
-            iv: cg?.iv || 0,
-            oi_change: (cc.oi || 0) - (cc.prev_oi || 0),
-            oi: cc.oi || 0,
-            volume: cc.volume || 0,
-            ltp: cc.ltp || 0,
-            ltp_change: (cc.ltp || 0) - (cc.close_price || 0)
-          },
-          put: {
-            pop: pg?.pop || 0,
-            theta: pg?.theta || 0,
-            gamma: pg?.gamma || 0,
-            vega: pg?.vega || 0,
-            delta: pg?.delta || 0,
-            iv: pg?.iv || 0,
-            oi_change: (pc.oi || 0) - (pc.prev_oi || 0),
-            oi: pc.oi || 0,
-            volume: pc.volume || 0,
-            ltp: pc.ltp || 0,
-            ltp_change: (pc.ltp || 0) - (pc.close_price || 0)
-          }
+          call: { pop:cg.pop||0, theta:cg.theta||0, gamma:cg.gamma||0, vega:cg.vega||0,
+                  delta:cg.delta||0, iv:cg.iv||0,
+                  oi_change:(cc.oi||0)-(cc.prev_oi||0), oi:cc.oi||0, volume:cc.volume||0,
+                  ltp:cc.ltp||0, ltp_change:(cc.ltp||0)-(cc.close_price||0) },
+          put:  { pop:pg.pop||0, theta:pg.theta||0, gamma:pg.gamma||0, vega:pg.vega||0,
+                  delta:pg.delta||0, iv:pg.iv||0,
+                  oi_change:(pc.oi||0)-(pc.prev_oi||0), oi:pc.oi||0, volume:pc.volume||0,
+                  ltp:pc.ltp||0, ltp_change:(pc.ltp||0)-(pc.close_price||0) },
         };
       });
-      
-      
-      const diskSnap = {
-        symbol: safeSymbol,
-        expiry: selectedExpiry,
-        date: latestDate,
-        time: timeHHMMSS,
-        spot_price: spotPrice,
-        lot_size: data.metadata?.lot_size || 1,
-        chain: chain,
-        // Additional info for expiry selection
-        isExpiryDay: isExpiryDay,
-        currentExpiry: futureExpiries[0] || selectedExpiry,
-        nextExpiry: futureExpiries[1] || null,
-        availableExpiries: expiriesWithTodayData
-      };
 
-      // Warm liveCache + Redis so next request (WS or API) is instant
-      if (!requestedExpiry) {
-        liveCache.set(safeSymbol, diskSnap);
-        try {
-          const { publishUpdate } = require('../ws/websocket');
-          publishUpdate(safeSymbol, diskSnap, null).catch(() => {});
-        } catch (_) {}
-      }
-
-      res.json(diskSnap);
+      res.json({
+        symbol: safeSymbol, expiry: requestedExpiry, date: latestDate, time: timeHHMMSS,
+        spot_price: spotPrice, lot_size: data.metadata?.lot_size || 1,
+        spot_prev_close:    data.metadata?.spot_prev_close  || 0,
+        spot_change:        data.metadata?.spot_change      || 0,
+        spot_pct_change:    data.metadata?.spot_pct_change  || 0,
+        futures_ltp:        data.metadata?.futures_ltp      || 0,
+        futures_prev_close: data.metadata?.futures_prev     || 0,
+        futures_change:     data.metadata?.futures_change   || 0,
+        futures_pct_change: data.metadata?.futures_pct      || 0,
+        chain, isExpiryDay: futureExpiries[0] === today,
+        currentExpiry: futureExpiries[0] || requestedExpiry,
+        nextExpiry:    futureExpiries[1] || null,
+        availableExpiries: expiryFolders.filter(exp => {
+          const dF = folders(path.join(symbolPath, exp)).sort();
+          return dF.at(-1) === today;
+        }),
+      });
 
     } catch (error) {
-      res.status(500).json({
-        error: "Failed to load live data",
-        message: error.message 
-      });
+      res.status(500).json({ error: "Failed to load live data", message: error.message });
     }
   });
 
@@ -508,204 +703,160 @@ app.get("/api/symbols", (req, res) => {
   // ============ HISTORICAL DATA ENDPOINTS ============
 
   // Get all expiry dates for a symbol (historical)
-  app.get("/api/historical/expiries/:symbol", (req, res) => {
+  app.get("/api/historical/expiries/:symbol", async (req, res) => {
     try {
-      const symbol = req.params.symbol;
-      const safeSymbol = resolveSymbol(symbol);
+      const safeSymbol = resolveSymbol(req.params.symbol);
+      // MongoDB first
+      let dbExpiries = [];
+      try { dbExpiries = await OptionChain.distinct('expiry', { symbol: safeSymbol }); } catch (_) {}
+      // Disk fallback/merge
       const p = path.join(PATHS.MARKET, safeSymbol);
-      
-      if (!fs.existsSync(p)) {
-        return res.status(404).json({ error: "Symbol not found" });
-      }
-      
-      const expiries = folders(p).sort();
-      res.json(expiries);
+      const diskExpiries = folders(p);
+      const all = [...new Set([...diskExpiries, ...dbExpiries])].sort();
+      if (!all.length) return res.status(404).json({ error: "Symbol not found" });
+      res.json(all);
     } catch (error) {
       res.status(500).json({ error: "Failed to load expiries" });
     }
   });
 
   // Get all dates for a symbol and expiry (historical)
-  app.get("/api/historical/dates/:symbol/:expiry", (req, res) => {
+  app.get("/api/historical/dates/:symbol/:expiry", async (req, res) => {
     try {
-      const { symbol, expiry } = req.params;
-      const safeSymbol = resolveSymbol(symbol);
+      const { expiry } = req.params;
+      const safeSymbol = resolveSymbol(req.params.symbol);
+      // MongoDB first
+      let dbDates = [];
+      try { dbDates = await OptionChain.distinct('date', { symbol: safeSymbol, expiry }); } catch (_) {}
+      // Disk fallback/merge
       const p = path.join(PATHS.MARKET, safeSymbol, expiry);
-      
-      if (!fs.existsSync(p)) {
-        return res.status(404).json({ error: "Expiry not found" });
-      }
-      
-      const dates = folders(p).sort();
-      res.json(dates);
+      const diskDates = folders(p);
+      const all = [...new Set([...diskDates, ...dbDates])].sort();
+      if (!all.length) return res.status(404).json({ error: "Expiry not found" });
+      res.json(all);
     } catch (error) {
       res.status(500).json({ error: "Failed to load dates" });
     }
   });
 
   // Get all times (snapshots) for a symbol, expiry, and date
-  app.get("/api/historical/times/:symbol/:expiry/:date", (req, res) => {
+  app.get("/api/historical/times/:symbol/:expiry/:date", async (req, res) => {
     try {
-      const { symbol, expiry, date } = req.params;
+      const { expiry, date, symbol } = req.params;
       const safeSymbol = resolveSymbol(symbol);
-      const p = path.join(PATHS.MARKET, safeSymbol, expiry, date);
-      
-      if (!fs.existsSync(p)) {
-        return res.status(404).json({ error: "Date not found" });
+
+      // MongoDB first
+      let dbSnaps = [];
+      try {
+        dbSnaps = await OptionChain.find(
+          { symbol: safeSymbol, expiry, date },
+          { time: 1, _id: 0 }
+        ).sort({ ts: 1 }).lean();
+      } catch (_) {}
+
+      if (dbSnaps.length > 0) {
+        const snapshots = dbSnaps.map(s => ({
+          file:      `${safeSymbol}_${expiry}_${date}_${s.time.replace(/:/g, '-')}.json.gz`,
+          time:      s.time,
+          file_time: s.time.replace(/:/g, '-'),
+          date, expiry, symbol,
+        }));
+        return res.json(snapshots);
       }
-      
+
+      // Disk fallback
+      const p = path.join(PATHS.MARKET, safeSymbol, expiry, date);
+      if (!fs.existsSync(p)) return res.status(404).json({ error: "Date not found" });
       const jsonFiles = files(p).sort();
-      
-      // Create array of snapshot objects with HH:MM:SS time
       const snapshots = jsonFiles.map(filename => {
-        // Try to extract time from metadata first
         let time = parseTimeFromFilename(filename);
-        
-        // If we can read the file, get time from metadata
         try {
-          const filePath = path.join(p, filename);
-          const data = readOptionChainFile(filePath);
-          if (data.metadata && data.metadata.time_hhmmss) {
-            time = data.metadata.time_hhmmss;
-          }
-        } catch (e) {
-          // Fall back to filename parsing
-        }
-        
-        return {
-          file: filename,
-          time: time, // HH:MM:SS format
-          file_time: time.replace(/:/g, '-'), // Convert to HH-MM-SS for filename
-          date: date,
-          expiry: expiry,
-          symbol: symbol
-        };
+          const data = readOptionChainFile(path.join(p, filename));
+          if (data.metadata?.time_hhmmss) time = data.metadata.time_hhmmss;
+        } catch (_) {}
+        return { file: filename, time, file_time: time.replace(/:/g, '-'), date, expiry, symbol };
       });
-      
-      // Sort by time (HH:MM:SS)
-      snapshots.sort((a, b) => {
-        const timeA = a.time.split(':').map(Number);
-        const timeB = b.time.split(':').map(Number);
-        return (timeA[0] * 3600 + timeA[1] * 60 + timeA[2]) - 
-               (timeB[0] * 3600 + timeB[1] * 60 + timeB[2]);
-      });
-      
+      snapshots.sort((a, b) => a.time.localeCompare(b.time));
       res.json(snapshots);
     } catch (error) {
       res.status(500).json({ error: "Failed to load times" });
     }
   });
 
+  // Helper: transform decompressed option_chain rows to frontend chain format
+  function ocRowsToChain(option_chain) {
+    return (option_chain || []).map(row => {
+      const cc = row.call_options?.market_data   || {};
+      const pc = row.put_options?.market_data    || {};
+      const cg = row.call_options?.option_greeks || {};
+      const pg = row.put_options?.option_greeks  || {};
+      return {
+        strike: row.strike_price,
+        call: { pop: cg.pop||0, theta: cg.theta||0, gamma: cg.gamma||0, vega: cg.vega||0,
+                delta: cg.delta||0, iv: cg.iv||0,
+                oi_change: (cc.oi||0)-(cc.prev_oi||0), oi: cc.oi||0, volume: cc.volume||0,
+                ltp: cc.ltp||0, ltp_change: (cc.ltp||0)-(cc.close_price||0) },
+        put:  { pop: pg.pop||0, theta: pg.theta||0, gamma: pg.gamma||0, vega: pg.vega||0,
+                delta: pg.delta||0, iv: pg.iv||0,
+                oi_change: (pc.oi||0)-(pc.prev_oi||0), oi: pc.oi||0, volume: pc.volume||0,
+                ltp: pc.ltp||0, ltp_change: (pc.ltp||0)-(pc.close_price||0) },
+      };
+    });
+  }
+
   // Get specific snapshot data
-  app.get("/api/historical/snapshot/:symbol/:expiry/:date/:time", (req, res) => {
+  app.get("/api/historical/snapshot/:symbol/:expiry/:date/:time", async (req, res) => {
     try {
-      const { symbol, expiry, date, time } = req.params;
+      const { expiry, date, time } = req.params;
+      const { symbol } = req.params;
       const safeSymbol = resolveSymbol(symbol);
-      const fileTime = time.replace(/:/g, '-'); // Convert HH:MM:SS to HH-MM-SS
-      
-      // NEW FORMAT: SYMBOL_EXPIRY_YYYY-MM-DD_HH-MM-SS.json.gz
-      // Try compressed file first
-      let filename = `${safeSymbol}_${expiry}_${date}_${fileTime}.json.gz`;
-      let filePath = path.join(PATHS.MARKET, safeSymbol, expiry, date, filename);
-      
-      // If compressed file doesn't exist, try uncompressed
-      if (!fs.existsSync(filePath)) {
-        filename = `${safeSymbol}_${expiry}_${date}_${fileTime}.json`;
-        filePath = path.join(PATHS.MARKET, safeSymbol, expiry, date, filename);
-      }
-      
-      // If file doesn't exist, try to find it by scanning all files in the directory
-      if (!fs.existsSync(filePath)) {
-        const dirPath = path.join(PATHS.MARKET, safeSymbol, expiry, date);
-        const filesList = files(dirPath);
-        
-        // Find file containing the time (more flexible matching)
-        const foundFile = filesList.find(f => {
-          const baseName = f.replace('.json.gz', '').replace('.json', '');
-          // Match files that end with _HH-MM-SS pattern
-          return baseName.endsWith(`_${fileTime}`) || baseName.includes(`_${date}_${fileTime}`);
-        });
-        
-        if (foundFile) {
-          filename = foundFile;
-          filePath = path.join(dirPath, filename);
-        } else {
-          return res.status(404).json({ 
-            error: "Snapshot not found",
-            expected: filename,
-            available: filesList.slice(0, 5)
+
+      // MongoDB first — exact time match
+      try {
+        const doc = unpackDoc(await OptionChain.findOne({ symbol: safeSymbol, expiry, date, time }).lean());
+        if (doc) {
+          const option_chain = decompressChainData(doc.oc || []);
+          const chain = ocRowsToChain(option_chain);
+          const spotPrice = option_chain[0]?.underlying_spot_price || doc.m?.spot_price || 0;
+          return res.json({
+            symbol, expiry, date,
+            time:       doc.m?.time_hhmmss || time,
+            spot_price: spotPrice,
+            lot_size:   doc.m?.lot_size || 1,
+            chain,
           });
         }
+      } catch (_) {}
+
+      // Disk fallback
+      const fileTime = time.replace(/:/g, '-');
+      let filePath = path.join(PATHS.MARKET, safeSymbol, expiry, date,
+                               `${safeSymbol}_${expiry}_${date}_${fileTime}.json.gz`);
+      if (!fs.existsSync(filePath)) {
+        filePath = filePath.replace('.json.gz', '.json');
       }
-      
-      // Read and parse the file
+      if (!fs.existsSync(filePath)) {
+        const dirPath = path.join(PATHS.MARKET, safeSymbol, expiry, date);
+        const found = files(dirPath).find(f => {
+          const base = f.replace('.json.gz', '').replace('.json', '');
+          return base.endsWith(`_${fileTime}`) || base.includes(`_${date}_${fileTime}`);
+        });
+        if (!found) return res.status(404).json({ error: "Snapshot not found" });
+        filePath = path.join(dirPath, found);
+      }
+
       const data = readOptionChainFile(filePath);
-      
-      // Extract spot price
-      let spotPrice = 0;
-      if (data.option_chain && data.option_chain.length > 0) {
-        spotPrice = data.option_chain[0].underlying_spot_price || 0;
-      }
-      
-      // Get time from metadata
-      let timeHHMMSS = time;
-      if (data.metadata && data.metadata.time_hhmmss) {
-        timeHHMMSS = data.metadata.time_hhmmss;
-      }
-      
-      // Transform data
-      const chain = data.option_chain.map(row => {
-        const cc = row.call_options?.market_data || {};
-        const pc = row.put_options?.market_data || {};
-        const cg = row.call_options?.option_greeks || {};
-        const pg = row.put_options?.option_greeks || {};
-        
-        return {
-          strike: row.strike_price,
-          call: {
-            pop: cg?.pop || 0,
-            theta: cg?.theta || 0,
-            gamma: cg?.gamma || 0,
-            vega: cg?.vega || 0,
-            delta: cg?.delta || 0,
-            iv: cg?.iv || 0,  // IMPLIED VOLATILITY - NEW
-            oi_change: (cc.oi || 0) - (cc.prev_oi || 0),
-            oi: cc.oi || 0,
-            volume: cc.volume || 0,
-            ltp: cc.ltp || 0,
-            ltp_change: (cc.ltp || 0) - (cc.close_price || 0)
-          },
-          put: {
-            pop: pg?.pop || 0,
-            theta: pg?.theta || 0,
-            gamma: pg?.gamma || 0,
-            vega: pg?.vega || 0,
-            delta: pg?.delta || 0,
-            iv: pg?.iv || 0,  // IMPLIED VOLATILITY - NEW
-            oi_change: (pc.oi || 0) - (pc.prev_oi || 0),
-            oi: pc.oi || 0,
-            volume: pc.volume || 0,
-            ltp: pc.ltp || 0,
-            ltp_change: (pc.ltp || 0) - (pc.close_price || 0)
-          }
-        };
-      });
-      
+      const spotPrice = data.option_chain?.[0]?.underlying_spot_price || 0;
       res.json({
-        symbol: symbol,
-        expiry: expiry,
-        date: date,
-        time: timeHHMMSS,
+        symbol, expiry, date,
+        time:       data.metadata?.time_hhmmss || time,
         spot_price: spotPrice,
-        lot_size: data.metadata?.lot_size || 1,
-        chain: chain
+        lot_size:   data.metadata?.lot_size || 1,
+        chain:      ocRowsToChain(data.option_chain || []),
       });
 
     } catch (error) {
-      res.status(500).json({
-        error: "Failed to load snapshot",
-        message: error.message 
-      });
+      res.status(500).json({ error: "Failed to load snapshot", message: error.message });
     }
   });
 
@@ -973,51 +1124,57 @@ app.get("/api/symbols", (req, res) => {
       }
       const latestDate = dateFolders.at(-1);
       
-      // Get all files for this date
       const datePath = path.join(expiryPath, latestDate);
+
+      // ── FAST PATH: use pre-built upstox candle file ──────────────────────────
+      // upstoxFeed.js writes _chart_upstox.json on every 1m candle close.
+      // Reading one JSON file is ~1ms vs 4-5s for scanning 500+ gz snapshots.
+      const upstoxFile = path.join(datePath, '_chart_upstox.json');
+      try {
+        if (fs.existsSync(upstoxFile)) {
+          const j = JSON.parse(fs.readFileSync(upstoxFile, 'utf8'));
+          if (j.candles?.length) {
+            // Aggregate 1m candles → requested timeframe
+            const tfSec = timeframe * 60;
+            const result = [];
+            let cur = null;
+            for (const c of j.candles) {
+              const slot = Math.floor(c.time / tfSec) * tfSec;
+              if (!cur || cur.time !== slot) {
+                if (cur) result.push(cur);
+                cur = { time: slot, open: c.open, high: c.high, low: c.low, close: c.close };
+              } else {
+                cur.high  = Math.max(cur.high,  c.high);
+                cur.low   = Math.min(cur.low,   c.low);
+                cur.close = c.close;
+              }
+            }
+            if (cur) result.push(cur);
+            return res.json({
+              symbol, expiry: latestExpiry, date: latestDate,
+              timeframe, candles: result, isEpoch: true
+            });
+          }
+        }
+      } catch (_) { /* fall through to gz scan */ }
+
+      // ── SLOW FALLBACK: scan all gz snapshots (used when upstox file missing) ─
       const jsonFiles = files(datePath).sort();
-      
-      // Extract spot prices from each file
       const snapshots = [];
-      
       for (const file of jsonFiles) {
         try {
           const filePath = path.join(datePath, file);
           const data = readOptionChainFile(filePath);
-          
           let spotPrice = 0;
-          if (data.option_chain && data.option_chain.length > 0) {
-            spotPrice = data.option_chain[0].underlying_spot_price || 0;
-          }
-          
-          // Get time from metadata or filename
-          let timeStr = "00:00:00";
-          if (data.metadata && data.metadata.time_hhmmss) {
-            timeStr = data.metadata.time_hhmmss;
-          } else {
-            timeStr = parseTimeFromFilename(file);
-          }
-          
-          if (spotPrice > 0) {
-            snapshots.push({
-              time: timeStr,
-              price: spotPrice
-            });
-          }
-        } catch (e) {
-        }
+          if (data.option_chain?.length > 0) spotPrice = data.option_chain[0].underlying_spot_price || 0;
+          let timeStr = data.metadata?.time_hhmmss || parseTimeFromFilename(file);
+          if (spotPrice > 0) snapshots.push({ time: timeStr, price: spotPrice });
+        } catch (_) {}
       }
-      
-      // Build candles
       const candles = buildCandlesFromSnapshots(snapshots, timeframe);
-      
       res.json({
-        symbol: symbol,
-        expiry: latestExpiry,
-        date: latestDate,
-        timeframe: timeframe,
-        candles: candles,
-        total_snapshots: snapshots.length
+        symbol, expiry: latestExpiry, date: latestDate,
+        timeframe, candles, total_snapshots: snapshots.length
       });
       
     } catch (error) {
@@ -2069,18 +2226,21 @@ function updateBromosForGapOpen(symbol) {
     const safeSymbol = resolveSymbol(symbol);
     const symbolPath = path.join(PATHS.MARKET, safeSymbol);
 
-    // ── Find the most recent _chart_strategy40.json (last saved day) ─────────
-    // generateAllChartData runs on every data fetch, so the last file of each
-    // day is naturally the post-3:35 PM snapshot — no time filter needed.
+    // ── Find YESTERDAY's EOD _chart_strategy40.json ──────────────────────────
+    // IMPORTANT: skip today's date — today's strategy40 is intraday data, not EOD.
+    // Gap correction must compare today's opening spot against YESTERDAY'S levels.
+    // Also skip any file without all_reversals — gap correction needs that array.
+    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     let prevBromos = null;
     let prevDp     = null;
     const expiries = folders(symbolPath).filter(f => !f.startsWith('_')).sort();
     outerFind: for (const exp of expiries.slice().reverse()) {
       const dates = folders(path.join(symbolPath, exp)).sort();
       for (const dt of dates.slice().reverse()) {
+        if (dt >= todayStr) continue; // skip today — need yesterday's EOD
         const dp  = path.join(symbolPath, exp, dt);
         const s40 = safeReadJson(path.join(dp, '_chart_strategy40.json'));
-        if (s40?.support && s40?.resistance) {
+        if (s40?.support && s40?.resistance && Array.isArray(s40.all_reversals) && s40.all_reversals.length > 0) {
           prevBromos = s40;
           prevDp     = dp;
           break outerFind;
@@ -2750,9 +2910,10 @@ function generateBromosOpenForAllDates() {
           const dp     = path.join(expPath, dt);
           const prevDp = path.join(expPath, prevDt);
 
-          // D-1's EOD strategy40 (base levels)
+          // D-1's EOD strategy40 (base levels) — must have all_reversals for gap correction
           const prevBromos = safeReadJson(path.join(prevDp, '_chart_strategy40.json'));
           if (!prevBromos?.support || !prevBromos?.resistance) continue;
+          if (!Array.isArray(prevBromos.all_reversals) || prevBromos.all_reversals.length === 0) continue;
 
           // D's opening spot — use first snapshot at or after 09:09 AM (post-open),
           // fallback to first snapshot of the day if none found
@@ -2779,6 +2940,146 @@ function generateBromosOpenForAllDates() {
   console.log(`  ✅ Bromos gap-corrected and written back to prev date for ${generated} dates`);
 }
 module.exports.generateBromosOpenForAllDates = generateBromosOpenForAllDates;
+
+// ── Async wrappers for startup — yield between symbols so HTTP/WS is never starved ──
+
+/**
+ * Async version of regenerateAllStrategy40 + generateBromosOpenForAllDates.
+ * Processes one symbol per event-loop tick so HTTP requests are never blocked.
+ */
+async function regenerateAllStrategy40Async() {
+  const dataDir = PATHS.MARKET;
+  if (!fs.existsSync(dataDir)) return;
+  const yld = () => new Promise(r => setImmediate(r));
+
+  const symFolders = fs.readdirSync(dataDir, { withFileTypes: true })
+    .filter(d => d.isDirectory() && /^[A-Z0-9_]+$/.test(d.name))
+    .map(d => d.name);
+
+  let generated = 0, failed = 0;
+  const symLatestEOD = {};
+
+  for (const sym of symFolders) {
+    await yld(); // yield to event loop between each symbol
+    const symPath = path.join(dataDir, sym);
+    try {
+      folders(symPath).forEach(exp => {
+        folders(path.join(symPath, exp)).forEach(dt => {
+          const dp = path.join(symPath, exp, dt);
+          const s40 = path.join(dp, '_chart_strategy40.json');
+          if (fs.existsSync(s40)) { try { fs.unlinkSync(s40); } catch(_) {} }
+          if (getDataFiles(dp).length === 0) return;
+          const result = generateStrategy40Data(dp, sym, exp, dt);
+          if (result) {
+            generated++;
+            const isEOD = (result.time || '') >= '15:00:00';
+            if (isEOD && (!symLatestEOD[sym] || dt > symLatestEOD[sym].date))
+              symLatestEOD[sym] = { data: result, date: dt };
+          } else { failed++; }
+        });
+      });
+      if (symLatestEOD[sym]) {
+        try { fs.writeFileSync(path.join(symPath, '_bromos_latest.json'), JSON.stringify(symLatestEOD[sym].data)); } catch(_) {}
+      }
+    } catch(e) { failed++; }
+  }
+  console.log(`  ✅ Strategy40 async — gen:${generated} fail:${failed}`);
+
+  // Gap correction: one symbol per tick
+  let gapFixed = 0;
+  for (const sym of symFolders) {
+    await yld();
+    const symPath = path.join(dataDir, sym);
+    try {
+      folders(symPath).forEach(exp => {
+        const expPath = path.join(symPath, exp);
+        const allDates = folders(expPath).sort();
+        for (let di = 1; di < allDates.length; di++) {
+          try {
+            const dt     = allDates[di];
+            const prevDt = allDates[di - 1];
+            const dp     = path.join(expPath, dt);
+            const prevDp = path.join(expPath, prevDt);
+            const prevBromos = safeReadJson(path.join(prevDp, '_chart_strategy40.json'));
+            if (!prevBromos?.support || !prevBromos?.resistance) continue;
+            const files = getDataFiles(dp).sort();
+            if (!files.length) continue;
+            const openFile = files.find(f => parseTimeFromFilename(f) >= '09:09:00') || files[0];
+            const openData = readOptionChainFile(path.join(dp, openFile));
+            const spot = openData?.option_chain?.[0]?.underlying_spot_price || 0;
+            if (!spot) continue;
+            const corrected = applyGapCorrection(prevBromos, spot);
+            if (corrected.gap_updated_at) {
+              fs.writeFileSync(path.join(prevDp, '_chart_strategy40.json'), JSON.stringify(corrected));
+              gapFixed++;
+            }
+          } catch(_) {}
+        }
+      });
+    } catch(_) {}
+  }
+  console.log(`  ✅ Gap correction async — fixed:${gapFixed}`);
+
+  // Re-read gap-corrected files and update _bromos_latest.json
+  for (const sym of symFolders) {
+    await yld();
+    const symPath = path.join(dataDir, sym);
+    let latestEOD = null, latestDate = '';
+    try {
+      folders(symPath).filter(f => !f.startsWith('_')).forEach(exp => {
+        folders(path.join(symPath, exp)).sort().forEach(dt => {
+          const s40 = safeReadJson(path.join(symPath, exp, dt, '_chart_strategy40.json'));
+          if (s40?.support && s40?.resistance && (s40.time || '') >= '15:00:00' && dt > latestDate)
+            { latestDate = dt; latestEOD = s40; }
+        });
+      });
+      if (latestEOD) fs.writeFileSync(path.join(symPath, '_bromos_latest.json'), JSON.stringify(latestEOD));
+    } catch(_) {}
+  }
+  console.log('  ✅ _bromos_latest.json updated with gap-corrected values (async)');
+}
+module.exports.regenerateAllStrategy40Async = regenerateAllStrategy40Async;
+
+/**
+ * Async version of autoGenerateMissingChartData + backfillMCTRData.
+ * Processes one symbol per event-loop tick.
+ */
+async function autoGenerateMissingChartDataAsync() {
+  const dataDir = PATHS.MARKET;
+  if (!fs.existsSync(dataDir)) return;
+  const yld = () => new Promise(r => setImmediate(r));
+
+  const symFolders = fs.readdirSync(dataDir, { withFileTypes: true })
+    .filter(d => d.isDirectory() && /^[A-Z0-9_]+$/.test(d.name))
+    .map(d => d.name);
+
+  // Only regenerate chart files for recent dates (last 30 days).
+  // Older dates are generated on-demand when the user requests them.
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  let chartGen = 0;
+  for (const sym of symFolders) {
+    await yld(); // yield between symbols
+    try {
+      for (const exp of folders(path.join(dataDir, sym))) {
+        for (const dt of folders(path.join(dataDir, sym, exp))) {
+          if (dt < cutoff) continue; // skip old dates — generated on-demand
+          await yld(); // yield between EACH DATE so HTTP/WS is never starved
+          const dp = path.join(dataDir, sym, exp, dt);
+          if (getDataFiles(dp).length === 0) continue;
+          const needed = [
+            '_chart_oi.json', '_chart_oichng.json', '_chart_spot.json',
+            '_chart_pcr.json', '_chart_strategy40.json', '_shifting.json', '_mctr.json'
+          ].some(fn => !fs.existsSync(path.join(dp, fn)));
+          if (needed) { try { generateAllChartData(sym, exp, dt); chartGen++; } catch(_) {} }
+        }
+      }
+    } catch(_) {}
+  }
+  console.log(`  ✅ Chart/MCTR async — generated for ${chartGen} recent date folders (last 30 days)`);
+}
+module.exports.autoGenerateMissingChartDataAsync = autoGenerateMissingChartDataAsync;
+
 // ── Backfill ALL existing date folders that are missing _mctr.json ──────────
 function backfillMCTRData(forceAll) {
   const dataDir = PATHS.MARKET;
@@ -2796,9 +3097,8 @@ function backfillMCTRData(forceAll) {
     });
   });
 }
-setTimeout(() => backfillMCTRData(false), 3000);
-// Generate missing _chart_strategy40.json (and all other chart files) for all date folders
-setTimeout(() => autoGenerateMissingChartData(), 6000);
+// NOTE: backfillMCTRData and autoGenerateMissingChartData are called from server.js startup
+// check with async setImmediate yields — do NOT auto-fire here (causes event loop blocking)
 
 // ── Backfill _bromos_latest.json at symbol level from newest _chart_strategy40.json ──
 function backfillBromosLatest() {
@@ -3053,4 +3353,9 @@ function registerVolOiCngRoute(app) {
 setTimeout(() => { backfillVolOiCng(); _startVolOiLiveRegen(); }, 12000);
 
 module.exports.registerVolOiCngRoute = registerVolOiCngRoute;
+module.exports.notifyLiveCacheUpdated = notifyLiveCacheUpdated;
 module.exports.backfillVolOiCng      = backfillVolOiCng;
+module.exports.loadLiveFromDisk      = loadLiveFromDisk;
+module.exports.loadLiveFromDB        = loadLiveFromDB;
+module.exports.setConfiguredSymbols  = (syms) => { _configuredSymbols = syms ? [...syms] : null; };
+module.exports.refreshPrefetchGzip   = refreshPrefetchGzip;

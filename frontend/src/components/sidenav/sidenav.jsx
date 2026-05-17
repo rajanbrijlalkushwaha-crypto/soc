@@ -24,8 +24,9 @@ export default function SideNav() {
     { type: 'SET_AI_TRAIN',        payload: false },
     { type: 'SET_AI_STOCK',        payload: false },
     { type: 'SET_JOIN_MEET',       payload: false },
+    { type: 'SET_LIVE_OC',         payload: false },
     { type: 'SET_TEAM_PAGE',       payload: false },
-    { type: 'SET_CRYPTO_PAGE',     payload: false },
+    { type: 'SET_SUBSCRIPTION_PAGE', payload: false },
   ];
 
   const goDashboard  = () => navigate('/dashboard',    [...RESET, { type: 'SET_INDEX_PAGE',      payload: true  }]);
@@ -40,17 +41,16 @@ export default function SideNav() {
   const goAITrain    = () => navigate('/ai-train',     [...RESET, { type: 'SET_AI_TRAIN',        payload: true  }]);
   const goAIStock    = () => navigate('/ai-stock',     [...RESET, { type: 'SET_AI_STOCK',        payload: true  }]);
   const goJoinMeet   = () => navigate('/join-meet',    [...RESET, { type: 'SET_JOIN_MEET',       payload: true  }]);
-  const goTeam       = () => navigate('/team',         [...RESET, { type: 'SET_TEAM_PAGE',       payload: true  }]);
-  const goCrypto     = () => navigate('/crypto',        [...RESET, { type: 'SET_CRYPTO_PAGE',     payload: true  }]);
-
+  const goLiveOC     = () => navigate('/live-oc',      [...RESET, { type: 'SET_LIVE_OC',          payload: true  }]);
+  const goTeam         = () => navigate('/team',         [...RESET, { type: 'SET_TEAM_PAGE',         payload: true  }]);
+  const goSubscription = () => navigate('/subscription', [...RESET, { type: 'SET_SUBSCRIPTION_PAGE', payload: true  }]);
   const openNotif = () => dispatch({ type: 'SET_NOTIF_PANEL', payload: true });
 
   // ── Active state ─────────────────────────────────────────
   const isAITrain      = state.aiTrainActive;
   const isAIStock      = state.aiStockActive;
-  const isCrypto       = state.cryptoPageActive;
   const isDashboard    = state.indexPageActive && !state.holidayListActive && !state.supportActive && !state.profileActive && !state.adminPanelActive && !state.subscriptionActive && !state.journalActive && !state.teamPageActive && !state.aiTrainActive;
-  const isLive         = !state.indexPageActive && !state.historicalMode && !state.aiPageActive && !state.holidayListActive && !state.supportActive && !state.profileActive && !state.adminPanelActive && !state.subscriptionActive && !state.journalActive && !state.teamPageActive && !state.aiTrainActive && !state.cryptoPageActive;
+  const isLive         = !state.indexPageActive && !state.historicalMode && !state.aiPageActive && !state.holidayListActive && !state.supportActive && !state.profileActive && !state.adminPanelActive && !state.subscriptionActive && !state.journalActive && !state.teamPageActive && !state.aiTrainActive;
   const isHistorical   = state.historicalMode && !state.holidayListActive && !state.supportActive && !state.profileActive && !state.adminPanelActive;
   const isPowerAI      = state.aiPageActive && state.aiPageType === 'stock';
   const isHolidayList  = state.holidayListActive;
@@ -59,9 +59,11 @@ export default function SideNav() {
   const isAdminPanel   = state.adminPanelActive;
   const isJournal      = state.journalActive;
   const isTeam         = state.teamPageActive;
+  const isSubscription = state.subscriptionActive;
 
   const userRole = state.user?.role || 'user';
   const isJoinMeet     = state.joinMeetActive;
+  const isLiveOC       = state.liveOCActive;
   const isAdminOrMember = userRole === 'admin' || userRole === 'member';
 
   // Check indicator access config — controls nav item visibility per role
@@ -75,10 +77,8 @@ export default function SideNav() {
     { section: 'Main', items: [
       { icon: '🏠', label: 'Dashboard',         tooltip: 'Dashboard',         active: isDashboard,  onClick: goDashboard  },
       { icon: '📊', label: 'Live Option Chain',  tooltip: 'Live Option Chain',  active: isLive,       onClick: goLive       },
+      { icon: '⚡', label: 'Live OC (Ticks)',    tooltip: 'Live OC — tick-by-tick via WebSocket', active: isLiveOC, onClick: goLiveOC },
       { icon: '📅', label: 'Historical Data',    tooltip: 'Historical Data',   active: isHistorical, onClick: goHistorical },
-    ]},
-    { section: 'Crypto', items: [
-      { icon: '🪙', label: 'Crypto Options', tooltip: 'Crypto Option Chain', active: isCrypto, onClick: goCrypto },
     ]},
     { section: 'AI Tools', items: [
       { icon: '⚡', label: 'Power AI Stock', tooltip: 'Power AI Stock', active: isPowerAI, onClick: goPowerAI },
@@ -94,6 +94,7 @@ export default function SideNav() {
       { icon: '📹', label: 'Join Meet',    tooltip: 'Join Meet',    active: isJoinMeet,    onClick: goJoinMeet   },
     ]},
     { section: 'Account', items: [
+      { icon: '💎', label: 'Subscription',  tooltip: 'Subscription',  active: isSubscription,      onClick: goSubscription },
       { icon: '🔔', label: 'Notifications', tooltip: 'Notifications', active: state.notifPanelOpen, onClick: openNotif, notifCount: state.notifUnread },
       { icon: '👤', label: 'Profile',       tooltip: 'Profile',       active: isProfile,           onClick: goProfile    },
       ...(isAdminOrMember ? [{ icon: '⚙️', label: 'Admin Panel', tooltip: 'Admin Panel', active: isAdminPanel, onClick: goAdminPanel }] : []),

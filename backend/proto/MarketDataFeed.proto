@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package com.upstox.marketdatafeeder.rpc.proto;
+
+message FeedResponse {
+  map<string, Feed> feeds = 1;
+}
+
+message Feed {
+  oneof ff {
+    FullFeed fullFeed = 1;
+    LTPC     ltpc     = 2;
+  }
+}
+
+message LTPC {
+  float ltp  = 1;
+  float cp   = 2;
+  float lc   = 3;
+  float pcp  = 4;
+}
+
+message FullFeed {
+  oneof mfd {
+    MarketFullData marketFF = 1;
+    OptionGreeks   optionChain = 2;
+  }
+}
+
+message MarketFullData {
+  float    ltpc_ltp           = 1;
+  float    ltpc_cp            = 2;
+  int64    vtt                = 3;
+  float    atp                = 4;
+  int64    oi                 = 5;
+  float    cp52wh             = 6;
+  float    cp52wl             = 7;
+  float    tbq                = 8;
+  float    tsq                = 9;
+  float    tot_buy_qty        = 10;
+  float    tot_sell_qty       = 11;
+  repeated BidAskQuote bq     = 12;
+  repeated BidAskQuote sq     = 13;
+  OHLCData ohlc               = 14;
+  float    hl                 = 15;
+  float    lc                 = 16;
+  float    pcp                = 17;
+  float    toi                = 18;
+}
+
+message OptionGreeks {
+  float    ltpc_ltp      = 1;
+  float    ltpc_cp       = 2;
+  int64    vtt           = 3;
+  float    atp           = 4;
+  int64    oi            = 5;
+  float    delta         = 6;
+  float    theta         = 7;
+  float    gamma         = 8;
+  float    vega          = 9;
+  float    iv            = 10;
+  repeated BidAskQuote bq = 11;
+  repeated BidAskQuote sq  = 12;
+  OHLCData ohlc          = 13;
+  float    lc            = 14;
+  float    pcp           = 15;
+  float    toi           = 16;
+}
+
+message BidAskQuote {
+  int32 quantity = 1;
+  float price    = 2;
+  int32 orders   = 3;
+}
+
+message OHLCData {
+  float open    = 1;
+  float high    = 2;
+  float low     = 3;
+  float close   = 4;
+  int32 interval = 5;
+}

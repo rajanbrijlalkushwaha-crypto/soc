@@ -719,13 +719,17 @@ function scheduleAutoRun() {
       return;
     }
 
-    // During market hours: re-analyse today every 1 minute (keeps live signals fresh)
-    if (isMarketHoursIST() && !_runStatus.running) {
+    // During market hours: re-analyse today every 5 minutes.
+    // analyzeDay reads all .gz snapshots synchronously — running every 1 min blocks
+    // the event loop as files accumulate. 5 min keeps signals fresh without starvation.
+    const _lastTrainAI = global._lastTrainAIRun || 0;
+    if (isMarketHoursIST() && !_runStatus.running && (Date.now() - _lastTrainAI) >= 300_000) {
+      global._lastTrainAIRun = Date.now();
       console.log('[TrainAI] Intraday auto-analysis...');
       _runStatus.running = true;
       setImmediate(() => runAllAnalysis(false));
     }
-  }, 60_000); // check every minute
+  }, 60_000); // check every minute, but run every 5 min
 }
 
 // ── Express Routes ────────────────────────────────────────────────────────────

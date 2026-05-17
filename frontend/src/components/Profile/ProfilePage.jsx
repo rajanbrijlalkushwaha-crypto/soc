@@ -14,16 +14,15 @@ function useBodyScroll() {
 }
 
 // ── Subscription helpers ──
-function addDays(dateStr, days) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  return d;
-}
 function fmtDate(date) {
   return new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
-function daysLeft(endDate) {
-  return Math.ceil((new Date(endDate) - new Date()) / (1000 * 60 * 60 * 24));
+function subProgressPct(startDate, endDate) {
+  const now = Date.now();
+  const start = new Date(startDate).getTime();
+  const end   = new Date(endDate).getTime();
+  if (end <= start) return 0;
+  return Math.max(0, Math.min(100, Math.round(((end - now) / (end - start)) * 100)));
 }
 const FEATURES = [
   'Live Option Chain', 'Historical Data', 'Power AI Stock',
@@ -159,15 +158,14 @@ export default function ProfilePage() {
   const displayEmail = profile?.email     || state.user?.email || '';
   const initials     = displayName ? displayName.trim()[0].toUpperCase() : '?';
 
-  // ── Subscription computed values ──
-  const createdAt  = profile?.createdAt || null;
-  const trialEnd   = createdAt ? addDays(createdAt, 90) : null;
-  const remaining  = trialEnd ? daysLeft(trialEnd) : null;
-  const isExpired  = remaining !== null && remaining < 0;
-  const isExpiring = remaining !== null && remaining >= 0 && remaining <= 10;
-  const usedDays   = remaining !== null ? Math.min(90, Math.max(0, 90 - remaining)) : 0;
-  const pct        = Math.round((usedDays / 90) * 100);
-  const trialColor = isExpired ? '#c62828' : isExpiring ? '#ff6f00' : '#2e7d32';
+  // ── Subscription computed values (from live state, not profile) ──
+  const sub        = state.subscription;
+  const subActive  = sub?.active === true;
+  const subDaysLeft = sub?.daysLeft ?? null;
+  const isExpiring = subActive && subDaysLeft !== null && subDaysLeft <= 10;
+  const subColor   = !subActive ? '#c62828' : isExpiring ? '#ff6f00' : '#2e7d32';
+  const subPct     = (subActive && sub?.startDate && sub?.endDate)
+    ? subProgressPct(sub.startDate, sub.endDate) : 0;
 
   return (
     <div className="profile-page">
@@ -230,34 +228,40 @@ export default function ProfilePage() {
         {/* ── 2. Subscription ── */}
         <div className="profile-card">
           <div className="profile-card-title">Subscription</div>
-          <div className="profile-sub-plan-row">
-            <span className="profile-sub-plan-name">Free Trial</span>
-            <span className="profile-sub-badge" style={{ color: trialColor, background: isExpired ? '#ffebee' : '#e8f5e9' }}>
-              {isExpired ? '⛔ Expired' : '● Active'}
-            </span>
-          </div>
-          <div className="profile-sub-info-row">
-            <span className="profile-sub-info-label">Start Date</span>
-            <span className="profile-sub-info-val">{createdAt ? fmtDate(createdAt) : '—'}</span>
-          </div>
-          <div className="profile-sub-info-row">
-            <span className="profile-sub-info-label">End Date</span>
-            <span className="profile-sub-info-val" style={{ color: isExpired ? '#c62828' : isExpiring ? '#ff6f00' : '#222' }}>
-              {trialEnd ? fmtDate(trialEnd) : '—'}
-            </span>
-          </div>
-          <div className="profile-sub-info-row">
-            <span className="profile-sub-info-label">Duration</span>
-            <span className="profile-sub-info-val">90 Days</span>
-          </div>
-          {remaining !== null && (
-            <div className="profile-sub-remaining" style={{ color: trialColor }}>
-              {isExpired ? `Trial expired ${Math.abs(remaining)} day${Math.abs(remaining) !== 1 ? 's' : ''} ago` : remaining === 0 ? 'Trial expires today!' : `${remaining} day${remaining !== 1 ? 's' : ''} remaining`}
-            </div>
-          )}
-          {profile && (
-            <div className="profile-sub-track">
-              <div className="profile-sub-bar" style={{ width: `${pct}%`, background: trialColor }} />
+          {subActive ? (
+            <>
+              <div className="profile-sub-plan-row">
+                <span className="profile-sub-plan-name">{sub.planName || 'Active Plan'}</span>
+                <span className="profile-sub-badge" style={{ color: subColor, background: isExpiring ? '#fff3e0' : '#e8f5e9' }}>
+                  {isExpiring ? '⚠ Expiring' : '● Active'}
+                </span>
+              </div>
+              {sub.startDate && (
+                <div className="profile-sub-info-row">
+                  <span className="profile-sub-info-label">Start Date</span>
+                  <span className="profile-sub-info-val">{fmtDate(sub.startDate)}</span>
+                </div>
+              )}
+              {sub.endDate && (
+                <div className="profile-sub-info-row">
+                  <span className="profile-sub-info-label">End Date</span>
+                  <span className="profile-sub-info-val" style={{ color: isExpiring ? '#ff6f00' : '#222' }}>
+                    {fmtDate(sub.endDate)}
+                  </span>
+                </div>
+              )}
+              {subDaysLeft !== null && (
+                <div className="profile-sub-remaining" style={{ color: subColor }}>
+                  {subDaysLeft === 0 ? 'Expires today!' : `${subDaysLeft} day${subDaysLeft !== 1 ? 's' : ''} remaining`}
+                </div>
+              )}
+              <div className="profile-sub-track">
+                <div className="profile-sub-bar" style={{ width: `${subPct}%`, background: subColor }} />
+              </div>
+            </>
+          ) : (
+            <div className="profile-sub-remaining" style={{ color: '#c62828', marginBottom: 12 }}>
+              {sub === null ? 'Loading subscription...' : 'No active subscription'}
             </div>
           )}
           <div className="profile-sub-features">
@@ -269,10 +273,12 @@ export default function ProfilePage() {
             ))}
           </div>
           <div className="profile-sub-upgrade">
-            <div className="profile-sub-upgrade-text">Contact us to upgrade after trial ends.</div>
+            <div className="profile-sub-upgrade-text">
+              {subActive ? 'Recharge to extend your access.' : 'Subscribe to get full access.'}
+            </div>
             <div className="profile-sub-upgrade-btns">
-              <a className="profile-sub-btn primary" href="mailto:simplifyoptionchain@gmail.com">📧 Email</a>
-              <a className="profile-sub-btn outline" href="https://t.me/soc.ai.in" target="_blank" rel="noreferrer">✈️ Telegram</a>
+              <a className="profile-sub-btn primary" href="mailto:simplifyoptionchain@gmail.com">Email</a>
+              <a className="profile-sub-btn outline" href="https://t.me/soc.ai.in" target="_blank" rel="noreferrer">Telegram</a>
             </div>
           </div>
         </div>

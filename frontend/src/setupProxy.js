@@ -36,4 +36,13 @@ module.exports = function(app) {
     logLevel: 'silent',
     on: { error: onError },
   }));
+
+  // Socket.IO proxy — for live option chain tick-by-tick
+  app.use('/socket.io', createProxyMiddleware({
+    target: 'http://localhost:3000',
+    changeOrigin: true,
+    ws: true,
+    logLevel: 'silent',
+    on: { error: onError },
+  }));
 };

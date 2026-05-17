@@ -667,42 +667,48 @@ function startAutoWatch(dataRoot) {
     }
 
     if (changed.length > 0) {
-      // Rescan changed symbol/expiries and collect ALL results (power or not)
+      // Rescan changed symbol/expiries — one per setImmediate tick so the event loop
+      // stays free for HTTP/WS even as scanOneDate reads 100+ .gz files synchronously.
       const rescannedResults = [];
+      let idx = 0;
 
-      for (const { symbol, expiry, date: d } of changed) {
+      function processNextChanged() {
+        if (idx >= changed.length) {
+          // All rescans done — rebuild today summary
+          try {
+            const powerDir = path.join(dataRoot, 'Power AI Stock', today());
+            const existing = fs.existsSync(powerDir)
+              ? getDataFiles(powerDir)
+                  .filter(f => !f.startsWith('_'))
+                  .map(f => {
+                    try { return JSON.parse(fs.readFileSync(path.join(powerDir, f), 'utf8')); }
+                    catch (e) { return null; }
+                  })
+                  .filter(Boolean)
+              : [];
+            const rescannedKeys = new Set(changed.map(c => `${c.symbol}_${c.expiry}`));
+            const merged = [
+              ...existing.filter(r => !rescannedKeys.has(`${r.symbol}_${r.expiry}`)),
+              ...rescannedResults
+            ];
+            saveDaySummary(today(), merged, dataRoot);
+          } catch (e) { /* silent */ }
+          return;
+        }
+
+        const { symbol, expiry, date: d } = changed[idx++];
         try {
           const result = scanOneDate(symbol, expiry, d, dataRoot);
           if (result) {
             saveResult(result, dataRoot);
-            rescannedResults.push(result); // push ALL, not just power stocks
+            rescannedResults.push(result);
           }
         } catch (e) { /* silent */ }
+
+        setImmediate(processNextChanged); // yield between each instrument
       }
 
-      // Merge with already-saved today results (ALL files, not just power stocks)
-      // to rebuild a complete summary with correct total_scanned
-      try {
-        const powerDir = path.join(dataRoot, 'Power AI Stock', today());
-        const existing = fs.existsSync(powerDir)
-          ? getDataFiles(powerDir)
-              .filter(f => !f.startsWith('_'))
-              .map(f => {
-                try { return JSON.parse(fs.readFileSync(path.join(powerDir, f), 'utf8')); }
-                catch (e) { return null; }
-              })
-              .filter(Boolean)
-          : [];
-
-        // Replace rescanned entries, keep the rest — ALL results for total_scanned
-        const rescannedKeys = new Set(changed.map(c => `${c.symbol}_${c.expiry}`));
-        const merged = [
-          ...existing.filter(r => !rescannedKeys.has(`${r.symbol}_${r.expiry}`)),
-          ...rescannedResults
-        ];
-
-        saveDaySummary(today(), merged, dataRoot);
-      } catch (e) { /* silent */ }
+      setImmediate(processNextChanged);
     }
   }
 
@@ -747,14 +753,19 @@ function startAutoWatch(dataRoot) {
   }
 
   // ── BOOT FULL SCAN — runs ONCE on every server reboot ───────────────────────
-  // Scans ALL symbols / expiries / dates and saves/overwrites every result.
-  // Also rebuilds _summary.json for every date found.
-  // Runs in background with 150ms stagger so server stays responsive.
-  // After boot scan finishes → starts the live watcher + schedules daily audit.
+  // Scans recent dates (last 7 days) + any date missing a saved result.
+  // Historical dates that already have saved _powerai.json are SKIPPED — their
+  // results were already correct from the previous run. This prevents the boot
+  // scan from blocking the event loop for minutes on a large dataset.
+  // After scan finishes → starts the live watcher + schedules daily audit.
   function bootFullScan(onComplete) {
-    console.log('[PowerAI] 🚀 Boot scan started — scanning ALL data...');
+    console.log('[PowerAI] 🚀 Boot scan started (recent + missing only)...');
 
     const symbols = getFolders(dataRoot).filter(s => s !== 'Power AI Stock');
+
+    // Cutoff: re-scan the last 7 calendar days + any date missing saved results
+    const cutoffDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+      .toISOString().split('T')[0]; // YYYY-MM-DD
 
     // Build flat list of all {symbol, expiry, date} to process
     const allWork = [];
@@ -763,7 +774,15 @@ function startAutoWatch(dataRoot) {
       for (const expiry of expiries) {
         const dates = getFolders(path.join(dataRoot, symbol, expiry));
         for (const date of dates) {
-          allWork.push({ symbol, expiry, date });
+          // Always include recent dates; skip old dates that already have results
+          const isRecent = date >= cutoffDate;
+          const safeSym = symbol.toUpperCase().replace(/\s+/g, '_');
+          const hasSaved = fs.existsSync(
+            path.join(dataRoot, 'Power AI Stock', date, `${safeSym}_${expiry}.json`)
+          );
+          if (isRecent || !hasSaved) {
+            allWork.push({ symbol, expiry, date });
+          }
         }
       }
     }
@@ -812,14 +831,14 @@ function startAutoWatch(dataRoot) {
         }
       } catch (e) { /* silent */ }
 
-      setTimeout(processNext, 150); // stagger to avoid CPU spike
+      setTimeout(processNext, 500); // stagger — each scanOneDate reads 100+ .gz files synchronously
     }
     processNext();
   }
 
   // ── Startup sequence ─────────────────────────────────────────────────────────
-  // Wait 5s so server is fully ready, then:
-  //   1. Run FULL boot scan (ALL data, old + new) — overwrites everything
+  // Wait 15s so server is fully ready and can serve HTTP before heavy disk I/O.
+  //   1. Boot scan (recent 7 days + missing only — skips already-saved history)
   //   2. After boot scan finishes → seed watchState + start live watcher
   //   3. Schedule daily audit every 24h (fills only newly missing entries)
   setTimeout(() => {

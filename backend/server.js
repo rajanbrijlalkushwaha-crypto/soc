@@ -1,6 +1,15 @@
 // option-chain-server.js - OPTIMIZED FOR SPEED WITH AUTHENTICATION
 // Increase libuv thread pool — default 4 is too small for 60 concurrent gzip ops
 process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
+
+// Swallow EPERM rename errors from session-file-store atomic writes on Windows.
+// session-file-store writes to a .XXXXXX temp file then renames it — Windows throws
+// EPERM when the target .json is briefly locked. This is harmless (session already
+// saved to temp) so we silently ignore these rather than crashing the process.
+process.on('uncaughtException', (err) => {
+  if (err.code === 'EPERM' && err.syscall === 'rename') return;
+  throw err;
+});
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
@@ -9,12 +18,19 @@ const zlib = require('zlib');
 const cors = require("cors");
 const compression = require("compression");
 const session = require("express-session");
-const FileStore = require('session-file-store')(session);
-
-
 
 // Load environment variables from data/.env
 require('dotenv').config({ path: path.join(__dirname, '..', 'data', '.env') });
+
+// ── MongoDB ───────────────────────────────────────────────────────────────────
+const { connectDB }    = require('./db/mongoose');
+const { connectAtlas } = require('./db/atlasMongoose');
+const { User }         = require('./db/models/User');
+// Connect local MongoDB (option-chain data) and Atlas (users/subs/sessions) in parallel
+Promise.all([
+  connectDB().catch(err => console.error('[MongoDB] Startup connect failed:', err.message)),
+  connectAtlas().catch(err => console.error('[Atlas] Startup connect failed:', err.message)),
+]);
 
 // ── Centralized path config ───────────────────────────────────────────────────
 const { PATHS } = require('./config/paths');
@@ -54,94 +70,47 @@ const CONFIG = {
   // All stocks from INSTRUMENT_MASTER are available to activate/deactivate in admin
   // Default: only indices active. Use admin panel to activate stocks.
   INSTRUMENTS: [
-    // NSE Indices
+    // ── NSE Indices ──────────────────────────────────────────────────────────
     "NSE_INDEX|Nifty 50",
     "NSE_INDEX|Nifty Bank",
     "NSE_INDEX|NIFTY MID SELECT",
     "NSE_INDEX|Nifty Next 50",
     "NSE_INDEX|Nifty Financial Services",
-    // BSE Indices
+    // ── BSE Indices ──────────────────────────────────────────────────────────
     "BSE_INDEX|SENSEX",
     "BSE_INDEX|BANKEX",
     "BSE_INDEX|SENSEX 50",
-    // NSE F&O Stocks — all available, activate from Admin Panel
-    "NSE_EQ|INE040A01034",   // HDFCBANK
-    "NSE_EQ|INE090A01021",   // ICICIBANK
-    "NSE_EQ|INE062A01020",   // SBIN
-    "NSE_EQ|INE114A01011",   // AXISBANK
-    "NSE_EQ|INE476A01014",   // CANBK
-    "NSE_EQ|INE084A01016",   // BANKBARODA
-    "NSE_EQ|INE238A01034",   // PNB
-    "NSE_EQ|INE860A01027",   // HDFCLIFE
-    "NSE_EQ|INE795G01014",   // BAJFINANCE
-    "NSE_EQ|INE917I01010",   // BAJAJFINSV
-    "NSE_EQ|INE296A01024",   // SHRIRAMFIN
-    "NSE_EQ|INE774D01024",   // KOTAKBANK
-    "NSE_EQ|INE019A01038",   // INDUSINDBK
-    "NSE_EQ|INE092T01019",   // IDFCFIRSTB
-    "NSE_EQ|INE726G01019",   // SBILIFE
-    "NSE_EQ|INE417T01026",   // SBICARD
-    "NSE_EQ|INE009A01021",   // INFY
-    "NSE_EQ|INE467B01029",   // TCS
-    "NSE_EQ|INE075A01022",   // WIPRO
-    "NSE_EQ|INE261F01014",   // TECHM
-    "NSE_EQ|INE121J01017",   // PERSISTENT
-    "NSE_EQ|INE03WK01018",   // COFORGE
-    "NSE_EQ|INE136Y01011",   // LTIM
-    "NSE_EQ|INE002A01018",   // RELIANCE
-    "NSE_EQ|INE213A01029",   // ONGC
-    "NSE_EQ|INE242A01010",   // IOC
-    "NSE_EQ|INE001A01036",   // BPCL
-    "NSE_EQ|INE101A01026",   // NTPC
-    "NSE_EQ|INE752E01010",   // POWERGRID
-    "NSE_EQ|INE848E01016",   // TATAPOWER
-    "NSE_EQ|INE731A01020",   // NHPC
-    "NSE_EQ|INE020B01018",   // ADANIPOWER
-    "NSE_EQ|INE364U01010",   // ADANIGREEN
-    "NSE_EQ|INE155A01022",   // TATAMTRS
-    "NSE_EQ|INE585B01010",   // MARUTI
-    "NSE_EQ|INE758T01015",   // BAJAJ-AUTO
-    "NSE_EQ|INE066A01021",   // EICHERMOT
-    "NSE_EQ|INE201A01024",   // HEROMOTOCO
-    "NSE_EQ|INE216A01030",   // ASHOKLEY
-    "NSE_EQ|INE775A01035",   // MOTHERSON
-    "NSE_EQ|INE160A01022",   // SUNPHARMA
-    "NSE_EQ|INE059A01026",   // CIPLA
-    "NSE_EQ|INE326A01037",   // DRREDDY
-    "NSE_EQ|INE475A01022",   // LUPIN
-    "NSE_EQ|INE358A01014",   // BIOCON
-    "NSE_EQ|INE089A01023",   // APOLLOHOSP
-    "NSE_EQ|INE860H01022",   // DIVISLAB
-    "NSE_EQ|INE081A01020",   // TATASTEEL
-    "NSE_EQ|INE205A01025",   // JSWSTEEL
-    "NSE_EQ|INE159A01016",   // HINDALCO
-    "NSE_EQ|INE226A01021",   // NMDC
-    "NSE_EQ|INE176A01028",   // COALINDIA
-    "NSE_EQ|INE092A01019",   // SAIL
-    "NSE_EQ|INE067A01029",   // VEDL
-    "NSE_EQ|INE102D01028",   // HINDCOPPER
-    "NSE_EQ|INE154A01025",   // ITC
-    "NSE_EQ|INE030A01027",   // HINDUNILVR
-    "NSE_EQ|INE192A01025",   // BRITANNIA
-    "NSE_EQ|INE012A01025",   // DABUR
-    "NSE_EQ|INE222E01019",   // TATACONSUM
-    "NSE_EQ|INE259A01022",   // GODREJCP
-    "NSE_EQ|INE239A01016",   // NESTLEIND
-    "NSE_EQ|INE018A01030",   // LT
-    "NSE_EQ|INE481G01011",   // ULTRACEMCO
-    "NSE_EQ|INE473A01011",   // AMBUJACEM
-    "NSE_EQ|INE038A01020",   // DLF
-    "NSE_EQ|INE417A01024",   // GODREJPROP
-    "NSE_EQ|INE423A01024",   // IRCTC
-    "NSE_EQ|INE669E01016",   // IDEA
-    "NSE_EQ|INE397D01024",   // BHARTIARTL
-    "NSE_EQ|INE053F01010",   // HAL
-    "NSE_EQ|INE274J01014",   // IRFC
-    "NSE_EQ|INE134E01011",   // PFC
-    "NSE_EQ|INE121A01024",   // ADANIENT
-    "NSE_EQ|INE752H01013",   // ADANIPORTS
-    "NSE_EQ|INE443B01011",   // BSE
-    "NSE_EQ|INE733E01010",   // LICI
+    // ── Top 30 Nifty 50 stocks by index weightage ─────────────────────────
+    "NSE_EQ|INE002A01018",   // 1  RELIANCE
+    "NSE_EQ|INE040A01034",   // 2  HDFCBANK
+    "NSE_EQ|INE397D01024",   // 3  BHARTIARTL
+    "NSE_EQ|INE062A01020",   // 4  SBIN
+    "NSE_EQ|INE090A01021",   // 5  ICICIBANK
+    "NSE_EQ|INE467B01029",   // 6  TCS
+    "NSE_EQ|INE795G01014",   // 7  BAJFINANCE
+    "NSE_EQ|INE018A01030",   // 8  LT
+    "NSE_EQ|INE030A01027",   // 9  HINDUNILVR
+    "NSE_EQ|INE009A01021",   // 10 INFY
+    "NSE_EQ|INE160A01022",   // 11 SUNPHARMA
+    "NSE_EQ|INE154A01025",   // 12 ITC
+    "NSE_EQ|INE114A01011",   // 13 AXISBANK
+    "NSE_EQ|INE585B01010",   // 14 MARUTI
+    "NSE_EQ|INE774D01024",   // 15 KOTAKBANK
+    "NSE_EQ|INE101A01026",   // 16 M&M
+    "NSE_EQ|INE733E01010",   // 17 NTPC
+    "NSE_EQ|INE481G01011",   // 18 ULTRACEMCO
+    "NSE_EQ|INE280A01028",   // 19 TITAN
+    "NSE_EQ|INE752E01010",   // 20 POWERGRID
+    "NSE_EQ|INE155A01022",   // 21 TATAMTRS
+    "NSE_EQ|INE021A01026",   // 22 ASIANPAINT
+    "NSE_EQ|INE917I01010",   // 23 BAJAJFINSV
+    "NSE_EQ|INE758T01015",   // 24 JIOFIN
+    "NSE_EQ|INE752H01013",   // 25 ADANIPORTS
+    "NSE_EQ|INE081A01020",   // 26 TATASTEEL
+    "NSE_EQ|INE860A01027",   // 27 HCLTECH
+    "NSE_EQ|INE066A01021",   // 28 EICHERMOT
+    "NSE_EQ|INE261F01014",   // 29 TECHM
+    "NSE_EQ|INE205A01025",   // 30 JSWSTEEL
   ],
 
   // ============ FULL INSTRUMENT REFERENCE (for admin UI / search) ============
@@ -198,7 +167,7 @@ const CONFIG = {
       { key: "NSE_EQ|INE476A01014",  name: "Canara Bank",            symbol: "CANBK",        sector: "Banking" },
       { key: "NSE_EQ|INE084A01016",  name: "Bank of Baroda",         symbol: "BANKBARODA",   sector: "Banking" },
       { key: "NSE_EQ|INE238A01034",  name: "Punjab National Bank",   symbol: "PNB",          sector: "Banking" },
-      { key: "NSE_EQ|INE860A01027",  name: "HDFC Life Insurance",    symbol: "HDFCLIFE",     sector: "Insurance" },
+      { key: "NSE_EQ|INE860A01027",  name: "HCL Technologies",       symbol: "HCLTECH",      sector: "IT" },
       { key: "NSE_EQ|INE795G01014",  name: "Bajaj Finance",          symbol: "BAJFINANCE",   sector: "NBFC" },
       { key: "NSE_EQ|INE917I01010",  name: "Bajaj Finserv",          symbol: "BAJAJFINSV",   sector: "NBFC" },
       { key: "NSE_EQ|INE296A01024",  name: "Shriram Finance",        symbol: "SHRIRAMFIN",   sector: "NBFC" },
@@ -223,7 +192,7 @@ const CONFIG = {
       { key: "NSE_EQ|INE213A01029",  name: "ONGC",                   symbol: "ONGC",         sector: "Oil & Gas" },
       { key: "NSE_EQ|INE242A01010",  name: "Indian Oil Corporation", symbol: "IOC",          sector: "Oil & Gas" },
       { key: "NSE_EQ|INE001A01036",  name: "BPCL",                   symbol: "BPCL",         sector: "Oil & Gas" },
-      { key: "NSE_EQ|INE101A01026",  name: "NTPC",                   symbol: "NTPC",         sector: "Power" },
+      { key: "NSE_EQ|INE101A01026",  name: "Mahindra & Mahindra",    symbol: "M_M",          sector: "Auto" },
       { key: "NSE_EQ|INE752E01010",  name: "Power Grid Corp",        symbol: "POWERGRID",    sector: "Power" },
       { key: "NSE_EQ|INE848E01016",  name: "Tata Power",             symbol: "TATAPOWER",    sector: "Power" },
       { key: "NSE_EQ|INE731A01020",  name: "NHPC",                   symbol: "NHPC",         sector: "Power" },
@@ -233,8 +202,7 @@ const CONFIG = {
       // ---- Auto ----
       { key: "NSE_EQ|INE155A01022",  name: "Tata Motors",            symbol: "TATAMTRS",     sector: "Auto" },
       { key: "NSE_EQ|INE585B01010",  name: "Maruti Suzuki",          symbol: "MARUTI",       sector: "Auto" },
-      { key: "NSE_EQ|INE101A01026",  name: "Mahindra & Mahindra",    symbol: "M&M",          sector: "Auto" },
-      { key: "NSE_EQ|INE758T01015",  name: "Bajaj Auto",             symbol: "BAJAJ-AUTO",   sector: "Auto" },
+      { key: "NSE_EQ|INE758T01015",  name: "Jio Financial Services", symbol: "JIOFIN",       sector: "NBFC" },
       { key: "NSE_EQ|INE066A01021",  name: "Eicher Motors",          symbol: "EICHERMOT",    sector: "Auto" },
       { key: "NSE_EQ|INE201A01024",  name: "Hero MotoCorp",          symbol: "HEROMOTOCO",   sector: "Auto" },
       { key: "NSE_EQ|INE216A01030",  name: "Ashok Leyland",          symbol: "ASHOKLEY",     sector: "Auto" },
@@ -259,6 +227,10 @@ const CONFIG = {
       { key: "NSE_EQ|INE067A01029",  name: "Vedanta",                symbol: "VEDL",         sector: "Metal" },
       { key: "NSE_EQ|INE102D01028",  name: "Hindustan Copper",       symbol: "HINDCOPPER",   sector: "Metal" },
 
+      // ---- Paints & Consumer ----
+      { key: "NSE_EQ|INE021A01026",  name: "Asian Paints",           symbol: "ASIANPAINT",   sector: "Paints" },
+      { key: "NSE_EQ|INE280A01028",  name: "Titan Company",          symbol: "TITAN",        sector: "Consumer" },
+
       // ---- FMCG ----
       { key: "NSE_EQ|INE154A01025",  name: "ITC",                    symbol: "ITC",          sector: "FMCG" },
       { key: "NSE_EQ|INE030A01027",  name: "Hindustan Unilever",     symbol: "HINDUNILVR",   sector: "FMCG" },
@@ -269,6 +241,7 @@ const CONFIG = {
       { key: "NSE_EQ|INE239A01016",  name: "Nestle India",           symbol: "NESTLEIND",    sector: "FMCG" },
 
       // ---- Infra & Construction ----
+      { key: "NSE_EQ|INE047A01021",  name: "Grasim Industries",      symbol: "GRASIM",       sector: "Infra" },
       { key: "NSE_EQ|INE018A01030",  name: "Larsen & Toubro",        symbol: "LT",           sector: "Infra" },
       { key: "NSE_EQ|INE481G01011",  name: "UltraTech Cement",       symbol: "ULTRACEMCO",   sector: "Cement" },
       { key: "NSE_EQ|INE012A01025",  name: "ACC",                    symbol: "ACC",          sector: "Cement" },
@@ -297,7 +270,7 @@ const CONFIG = {
       { key: "NSE_EQ|INE860A01027",  name: "Zomato (Eternal)",       symbol: "ZOMATO",       sector: "Internet" },
       { key: "NSE_EQ|INE669E01016",  name: "Paytm",                  symbol: "PAYTM",        sector: "Internet" },
       { key: "NSE_EQ|INE443B01011",  name: "BSE Ltd",                symbol: "BSE",          sector: "Exchange" },
-      { key: "NSE_EQ|INE733E01010",  name: "LIC",                    symbol: "LICI",         sector: "Insurance" },
+      { key: "NSE_EQ|INE733E01010",  name: "NTPC",                   symbol: "NTPC",         sector: "Power" },
     ],
 
     // ---- MCX COMMODITIES (Option Chain NOT supported via Upstox API) ----
@@ -378,6 +351,12 @@ app.use(express.static(reactBuildPath, {
   }
 }));
 
+// ── Prevent Cloudflare / any proxy from caching API responses ───────────────
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // ================================
 // CORS Configuration — allow all origins
 // ================================
@@ -393,29 +372,57 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ================================
-// Session Configuration with File Store
-// ================================we
+// Session Configuration — stored in MongoDB (survives restarts, works across cluster)
+// ================================
+const MongoStore = require('connect-mongo').MongoStore || require('connect-mongo');
 app.use(session({
   name: "soc_session",
   secret: process.env.SESSION_SECRET || "simplify-option-chain-secret-key-2025",
-  store: new FileStore({
-    path: PATHS.SESSIONS,
-    ttl: 86400,        // 24 hours
-    retries: 2,
-    retryDelay: 100,
-    reapInterval: 3600,
-    fileExtension: '.json',
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGODB_ATLAS_URI || process.env.MONGODB_URI || 'mongodb://localhost:27017/socupstock',
+    dbName: 'socupstock',
+    collectionName: 'sessions',
+    ttl: 7 * 24 * 60 * 60,   // expire after 7 days (seconds)
+    touchAfter: 3 * 3600,    // only update session document every 3 h to reduce writes
   }),
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: false,
-    sameSite: "lax",
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   },
-  rolling: true // Reset expiry on activity
+  rolling: false,
 }));
+
+// ── Single-session enforcement ─────────────────────────────────────────────────
+const sesCache = require('./sessionCache');
+
+app.use(async (req, res, next) => {
+  if (!req.session?.userId || !req.path.startsWith('/api')) return next();
+  try {
+    const uid = req.session.userId;
+    let activeId = sesCache.get(uid);
+
+    if (activeId === undefined) {
+      const u = await User.findOne({ userId: uid }, 'activeSessionId').lean();
+      activeId = u?.activeSessionId;
+      sesCache.set(uid, activeId);
+    }
+
+    if (activeId && activeId !== req.sessionID) {
+      req.session.destroy(() => {});
+      sesCache.del(uid);
+      return res.status(401).json({
+        success: false,
+        error: 'Logged in from another device. Please sign in again.',
+        code: 'SESSION_INVALIDATED',
+      });
+    }
+  } catch (_) {}
+  next();
+});
 
 // ================================
 // Auth Middleware Functions (open — no blocking)
@@ -436,9 +443,13 @@ const { sendUpstoxAuthEmail } = require('./emailService/emailService');
 // Original imports
 require("./api/chain")(app);
 
-// Import chart generators + VOL/OI tracker
-const { generateAllChartData, autoGenerateMissingChartData, registerVolOiCngRoute, updateBromosForGapOpen, regenerateAllStrategy40, generateBromosOpenForAllDates } = require("./api/chain");
+// Import chart generators + VOL/OI tracker + liveCache pre-warmer
+const { generateAllChartData, autoGenerateMissingChartData, registerVolOiCngRoute, updateBromosForGapOpen, regenerateAllStrategy40, regenerateAllStrategy40Async, autoGenerateMissingChartDataAsync, generateBromosOpenForAllDates, loadLiveFromDisk, setConfiguredSymbols, refreshPrefetchGzip } = require("./api/chain");
 registerVolOiCngRoute(app);
+
+// Subscription + Razorpay
+const subscriptionRouter = require('./api/subscription');
+app.use('/api/subscription', subscriptionRouter);
 
 // Power AI Stock filter
 require("./api/powerAiStock")(app);
@@ -593,8 +604,7 @@ function startMarketDataScheduler() {
 }
 
 function getISTToday() {
-  const utcMs = Date.now() + new Date().getTimezoneOffset() * 60000;
-  return new Date(utcMs + 5.5 * 3600000).toISOString().split('T')[0];
+  return getCurrentIST().date;
 }
 
 async function initMarketData() {
@@ -645,11 +655,23 @@ function getCurrentIST() {
 // ── In-memory log ring buffer (last 1000 lines) ───────────────────────────────
 const LOG_BUFFER_MAX = 1000;
 const logBuffer = [];
+const LOG_FILE_PATH = path.join(__dirname, 'server.log');
+const LOG_FILE_MAX_BYTES = 5 * 1024 * 1024; // rotate at 5 MB
 
 function pushToBuffer(line) {
   const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
-  logBuffer.push(`[${ts}] ${line}`);
+  const entry = `[${ts}] ${line}`;
+  logBuffer.push(entry);
   if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+  // Persist to disk — rotate if > 5 MB
+  try {
+    const stat = fs.existsSync(LOG_FILE_PATH) ? fs.statSync(LOG_FILE_PATH) : null;
+    if (stat && stat.size > LOG_FILE_MAX_BYTES) {
+      // Keep last 2 MB worth: rename current → .bak, start fresh
+      fs.renameSync(LOG_FILE_PATH, LOG_FILE_PATH + '.bak');
+    }
+    fs.appendFileSync(LOG_FILE_PATH, entry + '\n');
+  } catch (_) {}
 }
 
 // Intercept ALL console.log / console.error — safe stringify, never throws
@@ -722,20 +744,19 @@ async function getAllExpiryDates(instrumentKey = CONFIG.INSTRUMENT_KEY) {
       return [];
     }
     
-    // Check if today is the last day of current expiry
+    // Always return the 2 nearest expiries so users can switch between them
     const isLastDay = currentExpiry === today;
-    
+    const currentIndex = allExpiryDates.indexOf(currentExpiry);
+    const nextExpiry = allExpiryDates[currentIndex + 1];
+
     let result;
-    if (isLastDay) {
-      const currentIndex = allExpiryDates.indexOf(currentExpiry);
-      const nextExpiry = allExpiryDates[currentIndex + 1];
-      if (nextExpiry) {
-        log(`📅 LAST DAY OF EXPIRY! Fetching current (${currentExpiry}) AND next (${nextExpiry})`, "INFO");
-        result = [currentExpiry, nextExpiry];
+    if (nextExpiry) {
+      if (isLastDay) {
+        log(`📅 LAST DAY OF EXPIRY! Fetching current (${currentExpiry}) + next (${nextExpiry})`, "INFO");
       } else {
-        log(`📅 Last day of expiry but no next expiry available`, "WARNING");
-        result = [currentExpiry];
+        log(`📅 Fetching 2 nearest expiries: ${currentExpiry} + ${nextExpiry}`, "INFO");
       }
+      result = [currentExpiry, nextExpiry];
     } else {
       result = [currentExpiry];
     }
@@ -789,10 +810,10 @@ function getExpiriesToFetch(expiryDates) {
   
   return {
     current: currentExpiry,
-    next: isExpiryDay ? nextExpiry : null,
+    next: nextExpiry,
     isExpiryDay: isExpiryDay,
     allExpiries: futureDates.slice(0, 5),
-    expiriesToFetch: [currentExpiry]  // Only nearest expiry
+    expiriesToFetch: nextExpiry ? [currentExpiry, nextExpiry] : [currentExpiry]
   };
 }
 
@@ -809,37 +830,50 @@ const _getTokens = () => {
   } catch { return []; }
 };
 let _activeTokenIdx = 0;
+let _cycleToken     = null; // primary token for the current fetch cycle
+let _cycleToken2    = null; // secondary token — used for parallel secondary-expiry fetches
 const _tokenRateLimitUntil = {}; // { tokenId: timestamp }
 
-// Advance to next token every 3 seconds
-setInterval(() => {
+// Called once at the START of each cycle — picks TWO distinct non-rate-limited tokens:
+//   _cycleToken  → used by primary-expiry fetches (and all other API calls)
+//   _cycleToken2 → used by secondary-expiry fetches in parallel (different key = no rate conflict)
+// When fewer than 2 keys are available, _cycleToken2 falls back to the same token as _cycleToken.
+function advanceCycleToken() {
   const tokens = _getTokens();
-  if (tokens.length > 1) {
-    _activeTokenIdx = (_activeTokenIdx + 1) % tokens.length;
-  }
-}, 3000);
-
-function getActiveToken() {
-  const tokens = _getTokens();
-  if (tokens.length === 0) return '';
+  if (tokens.length === 0) { _cycleToken = ''; _cycleToken2 = ''; return; }
   const now = Date.now();
-  // Starting from current index, find first non-rate-limited token
+
+  // Pick primary token — first non-rate-limited key starting at _activeTokenIdx
+  let primaryIdx = -1;
   for (let i = 0; i < tokens.length; i++) {
     const idx = (_activeTokenIdx + i) % tokens.length;
-    const id  = tokens[idx].id;
-    if (now >= (_tokenRateLimitUntil[id] || 0)) {
-      if (i > 0) {
-        _activeTokenIdx = idx;
-        log(`🔄 Skipped to key ${idx + 1} (${tokens[idx].name}) — earlier keys rate-limited`);
-      }
-      return tokens[idx].token;
-    }
+    if (now >= (_tokenRateLimitUntil[tokens[idx].id] || 0)) { primaryIdx = idx; break; }
   }
-  return null; // all keys rate-limited
+  if (primaryIdx === -1) { _cycleToken = null; _cycleToken2 = null; return; } // all rate-limited
+
+  _cycleToken = tokens[primaryIdx].token;
+  _activeTokenIdx = (primaryIdx + 1) % tokens.length; // advance for next cycle
+
+  // Pick secondary token — next non-rate-limited key after primary (different key)
+  let secondaryIdx = -1;
+  for (let i = 1; i < tokens.length; i++) {
+    const idx = (primaryIdx + i) % tokens.length;
+    if (now >= (_tokenRateLimitUntil[tokens[idx].id] || 0)) { secondaryIdx = idx; break; }
+  }
+  _cycleToken2 = secondaryIdx !== -1 ? tokens[secondaryIdx].token : _cycleToken;
+
+  const p = primaryIdx + 1;
+  const s = secondaryIdx !== -1 ? secondaryIdx + 1 : p;
+  log(`🔑 Cycle tokens → Key ${p} (primary) + Key ${s} (secondary expiry)`);
 }
 
-async function fetchOptionChain(expiryDate, instrumentKey = CONFIG.INSTRUMENT_KEY) {
-  const token = getActiveToken();
+// Returns the pinned primary cycle token
+function getActiveToken() { return _cycleToken; }
+// Returns the pinned secondary cycle token (for parallel secondary-expiry fetch)
+function getSecondaryToken() { return _cycleToken2; }
+
+async function fetchOptionChain(expiryDate, instrumentKey = CONFIG.INSTRUMENT_KEY, overrideToken = null) {
+  const token = overrideToken || getActiveToken();
   if (!token) return null; // both keys rate-limited — skip silently
 
   try {
@@ -853,19 +887,22 @@ async function fetchOptionChain(expiryDate, instrumentKey = CONFIG.INSTRUMENT_KE
 
   } catch (error) {
     if (error.response?.status === 429) {
+      // Rate-limit the specific token that was used (may be primary or secondary)
       const tokens = _getTokens();
-      const idx = _activeTokenIdx % Math.max(tokens.length, 1);
-      const id  = tokens[idx]?.id;
-      if (id) _tokenRateLimitUntil[id] = Date.now() + 120000; // cool this key for 2 min
-      const next = (idx + 1) % tokens.length;
-      if (tokens.length > 1) {
-        _activeTokenIdx = next;
-        log(`⚠️ Key ${idx + 1} (${tokens[idx]?.name}) rate limited — switched to key ${next + 1}`);
+      const usedTok = token;
+      const hitEntry = tokens.find(t => t.token === usedTok);
+      if (hitEntry) {
+        _tokenRateLimitUntil[hitEntry.id] = Date.now() + 120_000; // cool for 2 min
+        const hitNum = tokens.indexOf(hitEntry) + 1;
+        log(`⚠️ Key ${hitNum} (${hitEntry.name}) rate limited — cooling for 2 min`);
       } else {
         log(`⚠️ Rate limited — pausing 2 min (add more API keys for failover)`);
       }
     } else if (error.response?.status === 401) {
-      log(`❌ TOKEN EXPIRED for key ${_activeTokenIdx + 1} — regenerate via admin panel`, "ERROR");
+      const tokens = _getTokens();
+      const hitEntry = tokens.find(t => t.token === token);
+      const hitNum = hitEntry ? tokens.indexOf(hitEntry) + 1 : '?';
+      log(`❌ TOKEN EXPIRED for key ${hitNum} — regenerate via admin panel`, "ERROR");
     }
     serverState.errors.push({
       timestamp: new Date().toISOString(),
@@ -886,7 +923,7 @@ const _quoteDayCache  = {}; // instrumentKey → { day, prev_close }
 const _futuresKeyCache = {}; // underlyingSymbol → { day, instrument_key, expiry }
 
 // Returns { ltp, prev_close, change, pct_change } for any instrument_key.
-// Tries full quote first; falls back to OHLC endpoint which works pre-market too.
+// Tries 3 Upstox endpoints in order: quotes → ohlc → ltp
 async function fetchMarketQuote(instrumentKey) {
   const token = getActiveToken();
   if (!token) return null;
@@ -911,13 +948,30 @@ async function fetchMarketQuote(instrumentKey) {
       params: { instrument_key: instrumentKey, interval: '1d' },
       headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
     });
-    const od   = oResp.data?.data;
-    const ok   = od && Object.keys(od)[0];
-    const o    = ok ? od[ok] : null;
-    const oltp = o?.last_price || o?.ohlc?.close || 0;
+    const od    = oResp.data?.data;
+    const ok    = od && Object.keys(od)[0];
+    const o     = ok ? od[ok] : null;
+    const oltp  = o?.last_price ?? 0;
     const oprev = o?.ohlc?.close || 0;
-    log(`[QUOTE OHLC] ${instrumentKey} → ltp:${oltp} prev:${oprev}`);
-    return { ltp: oltp, prev_close: oprev, change: oltp - oprev, pct_change: oprev > 0 ? ((oltp - oprev) / oprev) * 100 : 0 };
+
+    if (oltp > 0 || oprev > 0) {
+      return { ltp: oltp, prev_close: oprev, change: oltp - oprev, pct_change: oprev > 0 ? ((oltp - oprev) / oprev) * 100 : 0 };
+    }
+
+    // 3) LTP-only fallback — minimal endpoint, works for F&O when quotes/ohlc fail
+    const lResp = await axios.get(`${CONFIG.UPSTOX_BASE_URL}/market-quote/ltp`, {
+      params: { instrument_key: instrumentKey },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
+    });
+    const ld   = lResp.data?.data;
+    const lk   = ld && Object.keys(ld)[0];
+    const lq   = lk ? ld[lk] : null;
+    const lltp = lq?.last_price ?? 0;
+    if (lltp > 0) {
+      return { ltp: lltp, prev_close: 0, change: 0, pct_change: 0 };
+    }
+
+    return null;
   } catch (err) {
     log(`[QUOTE] error ${instrumentKey}: ${err.message}`);
     return null;
@@ -925,8 +979,8 @@ async function fetchMarketQuote(instrumentKey) {
 }
 
 // Resolve nearest-expiry futures instrument_key for an index.
-// Uses option/contract endpoint (same one used for option chain) — reliable, no search API needed.
-// Monthly expiry (last expiry of the nearest month) = futures expiry.
+// Reads the actual instrument_key with instrument_type='FUT' directly from the
+// /v2/option/contract response — avoids fragile manual key construction.
 async function resolveFuturesKey(underlyingSymbol) {
   const token = getActiveToken();
   if (!token) return null;
@@ -948,38 +1002,43 @@ async function resolveFuturesKey(underlyingSymbol) {
     const indexKey = indexKeyMap[underlyingSymbol];
     if (!indexKey) return null;
 
-    // Fetch available expiry dates (same endpoint as option chain — guaranteed to work)
+    // Fetch contracts — response includes instrument_type and instrument_key for each
     const resp = await axios.get(`${CONFIG.UPSTOX_BASE_URL}/option/contract`, {
       params: { instrument_key: indexKey },
       headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
     });
     const contracts = resp.data?.data || [];
 
-    // Collect unique expiry dates >= today, sorted ascending
+    // Find FUT contracts with expiry >= today, pick the nearest one
+    const futContracts = contracts
+      .filter(c => c.instrument_type === 'FUT' && c.expiry && c.expiry >= today)
+      .sort((a, b) => a.expiry.localeCompare(b.expiry));
+
+    if (futContracts.length > 0) {
+      // Use the actual instrument_key returned by Upstox — no manual construction needed
+      const key = futContracts[0].instrument_key;
+      const futExpiry = futContracts[0].expiry;
+      log(`[FUT] ${underlyingSymbol} → expiry ${futExpiry} → key ${key}`);
+      _futuresKeyCache[underlyingSymbol] = { day: today, instrument_key: key, expiry: futExpiry };
+      return key;
+    }
+
+    // Fallback: monthly expiry = last expiry of nearest month, construct key manually
     const expiries = [...new Set(
       contracts.map(c => c.expiry).filter(e => e && e >= today)
     )].sort();
-
     if (!expiries.length) return null;
-
-    // Monthly expiry = last expiry in the nearest calendar month = futures expiry
-    // (Weekly options have multiple expiries per month; monthly is the last one)
     const byMonth = {};
-    for (const e of expiries) {
-      byMonth[e.substring(0, 7)] = e; // keeps overwriting → ends up as last (latest) in month
-    }
-    const futExpiry = Object.values(byMonth).sort()[0]; // nearest monthly expiry
+    for (const e of expiries) { byMonth[e.substring(0, 7)] = e; }
+    const futExpiry = Object.values(byMonth).sort()[0];
     if (!futExpiry) return null;
-
-    // Construct Upstox futures instrument key: NSE_FO|NIFTY26APR17FUT
     const [year, month, day] = futExpiry.split('-');
     const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
     const mon = MONTHS[parseInt(month, 10) - 1];
     const yy  = year.slice(2);
     const exchange = ['SENSEX', 'BANKEX', 'SENSEX50'].includes(underlyingSymbol) ? 'BSE_FO' : 'NSE_FO';
     const key = `${exchange}|${underlyingSymbol}${yy}${mon}${day}FUT`;
-
-    log(`[FUT] ${underlyingSymbol} → monthly expiry ${futExpiry} → key ${key}`);
+    log(`[FUT] ${underlyingSymbol} → fallback key ${key}`);
     _futuresKeyCache[underlyingSymbol] = { day: today, instrument_key: key, expiry: futExpiry };
     return key;
   } catch (err) {
@@ -1188,8 +1247,30 @@ const _expiryCache = {};
 // Dirs we've already created this process lifetime — skip mkdirSync on repeat calls
 const _dirCreated = new Set();
 
+// Convert raw Upstox option_chain rows into the compact cacheChain format
+function processChainRows(rawRows) {
+  return (rawRows || []).map(row => {
+    const cc = row.call_options?.market_data || {};
+    const pc = row.put_options?.market_data  || {};
+    const cg = row.call_options?.option_greeks || {};
+    const pg = row.put_options?.option_greeks  || {};
+    return {
+      strike: row.strike_price,
+      call: { pop:cg.pop||0, theta:cg.theta||0, gamma:cg.gamma||0, vega:cg.vega||0,
+              delta:cg.delta||0, iv:cg.iv||0,
+              oi_change:(cc.oi||0)-(cc.prev_oi||0), oi:cc.oi||0, volume:cc.volume||0,
+              ltp:cc.ltp||0, ltp_change:(cc.ltp||0)-(cc.close_price||0) },
+      put:  { pop:pg.pop||0, theta:pg.theta||0, gamma:pg.gamma||0, vega:pg.vega||0,
+              delta:pg.delta||0, iv:pg.iv||0,
+              oi_change:(pc.oi||0)-(pc.prev_oi||0), oi:pc.oi||0, volume:pc.volume||0,
+              ltp:pc.ltp||0, ltp_change:(pc.ltp||0)-(pc.close_price||0) },
+    };
+  });
+}
+
 // Save option chain data (COMPRESSED)
-async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CONFIG.INSTRUMENT_KEY) {
+// diskOnly=true: save to disk only, skip RAM cache + WS publish (used for secondary expiry)
+async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKey = CONFIG.INSTRUMENT_KEY, diskOnly = false, overrideAvailableExpiries = null) {
   try {
     const currentIST = getCurrentIST();
     
@@ -1235,34 +1316,13 @@ async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKe
     const filePath = path.join(dateDir, fileName);
 
     // ── STEP 1: RAM CACHE + WS PUBLISH (immediate, before any disk I/O) ──────
-    // Users receive live data NOW. Disk write happens after in the background.
+    // Skipped when diskOnly=true (secondary expiry — only disk persistence needed)
+    if (!diskOnly) {
     try {
       const rawRows   = chainData.data || [];
       const spotPrice = rawRows[0]?.underlying_spot_price || 0;
 
-      const cacheChain = rawRows.map(row => {
-        const cc = row.call_options?.market_data || {};
-        const pc = row.put_options?.market_data || {};
-        const cg = row.call_options?.option_greeks || {};
-        const pg = row.put_options?.option_greeks || {};
-        return {
-          strike: row.strike_price,
-          call: {
-            pop: cg.pop || 0, theta: cg.theta || 0, gamma: cg.gamma || 0,
-            vega: cg.vega || 0, delta: cg.delta || 0, iv: cg.iv || 0,
-            oi_change: (cc.oi || 0) - (cc.prev_oi || 0),
-            oi: cc.oi || 0, volume: cc.volume || 0,
-            ltp: cc.ltp || 0, ltp_change: (cc.ltp || 0) - (cc.close_price || 0)
-          },
-          put: {
-            pop: pg.pop || 0, theta: pg.theta || 0, gamma: pg.gamma || 0,
-            vega: pg.vega || 0, delta: pg.delta || 0, iv: pg.iv || 0,
-            oi_change: (pc.oi || 0) - (pc.prev_oi || 0),
-            oi: pc.oi || 0, volume: pc.volume || 0,
-            ltp: pc.ltp || 0, ltp_change: (pc.ltp || 0) - (pc.close_price || 0)
-          }
-        };
-      });
+      const cacheChain = processChainRows(rawRows);
 
       // Expiry dir scan — cached per instrument per date, runs at most once/day
       const today = new Date().toISOString().split('T')[0];
@@ -1332,33 +1392,63 @@ async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKe
       dataToSave.m.futures_change  = futuresChange;
       dataToSave.m.futures_pct     = futuresPctChange;
 
-      const cacheKey    = safeInstrumentName.toUpperCase();
-      const newSnapshot = {
+      const cacheKey     = safeInstrumentName.toUpperCase();
+      const prevSnapshot = liveCache.get(cacheKey);
+      const newSnapshot  = {
         symbol: safeInstrumentName, expiry: expiryDate,
         date: istDateFolder, time: currentIST.time,
         spot_price: spotPrice, lot_size: getLotSize(instrumentKey),
         spot_prev_close: spotPrevClose, spot_change: spotChange, spot_pct_change: spotPctChange,
         futures_ltp: futuresLtp, futures_prev_close: futuresPrevClose,
         futures_change: futuresChange, futures_pct_change: futuresPctChange,
-        chain: cacheChain, isExpiryDay, currentExpiry, nextExpiry, availableExpiries
+        chain: cacheChain, isExpiryDay, currentExpiry, nextExpiry,
+        // Use caller-supplied list (from contract API) — disk scan is unreliable on first cycle
+        availableExpiries: overrideAvailableExpiries || availableExpiries,
+        // Preserve any secondary-expiry chain already in cache
+        chains: { ...(prevSnapshot?.chains || {}), [expiryDate]: cacheChain },
       };
 
-      const prevSnapshot = liveCache.get(cacheKey);
-      const diff         = diffSnapshot(prevSnapshot, newSnapshot);
-      liveCache.set(cacheKey, newSnapshot);
-      publishUpdate(cacheKey, newSnapshot, diff).catch(() => {}); // Redis Pub/Sub → WS clients
+      const diff = diffSnapshot(prevSnapshot, newSnapshot);
+      liveCache.set(cacheKey, newSnapshot); // writes Map + liveserver1 MongoDB
+      publishUpdate(cacheKey, newSnapshot, diff).catch(() => {}); // direct WS broadcast
+      // Refresh pre-gzip response cache — amortises JSON.stringify + gzip across all users
+      try { require('./api/chain').notifyLiveCacheUpdated(cacheKey, newSnapshot); } catch (_) {}
+      // Broadcast to sibling cluster workers so they keep liveCache in sync
+      if (process.send) {
+        try { process.send({ type: 'lc', symbol: cacheKey, data: JSON.stringify(newSnapshot) }); } catch (_) {}
+      }
 
       if (spotPrice > 0) {
         try { require('./api/upstoxFeed').processTick(safeInstrumentName, spotPrice); } catch (_) {}
       }
+
+      // Register option instrument keys with UpstoxWS so it subscribes to them
+      try {
+        const upstoxWs = require('./ws/upstoxWs');
+        const futSym = getFuturesSymbol(instrumentKey);
+        const fKey   = futSym ? (_futuresKeyCache[futSym]?.instrument_key || null) : null;
+        const optKeys = (chainData.data || []).flatMap(row => [
+          row.call_options?.instrument_key,
+          row.put_options?.instrument_key,
+        ]).filter(Boolean);
+        upstoxWs.registerInstruments({
+          symbol:      safeInstrumentName,
+          indexKey:    instrumentKey,
+          futuresKey:  fKey,
+          optionKeys:  optKeys,
+          expiry:      expiryDate,
+        });
+      } catch (_) {}
     } catch (cacheErr) {
       log(`⚠️ Cache update failed: ${cacheErr.message}`);
     }
+    } // end if (!diskOnly)
 
-    // ── STEP 2: ASYNC DISK WRITE — fire-and-forget ────────────────────────────
+    // ── STEP 2: ASYNC DISK + MONGODB WRITE — fire-and-forget ─────────────────
     // Deferred to next event-loop tick so any pending HTTP / login / WS requests
     // are served first. gzip runs in libuv thread pool — never blocks main thread.
     setImmediate(() => {
+      // ── 2a: Disk write (kept for chart generation backward compat) ──────────
       zlib.gzip(Buffer.from(JSON.stringify(dataToSave)), (gzErr, compressed) => {
         if (gzErr) { log(`❌ Gzip failed for ${safeInstrumentName}: ${gzErr.message}`); return; }
         const kb = (compressed.length / 1024).toFixed(2);
@@ -1373,16 +1463,56 @@ async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKe
           })
           .catch(writeErr => log(`❌ Disk write failed for ${safeInstrumentName}: ${writeErr.message}`));
       });
-      // Chart generation throttled to once per 60s per instrument — writeFileSync calls
-      // inside generateAllChartData are synchronous and block the event loop.
-      // Running them every 10s for 22 instruments causes site slowness.
-      if (!global._lastChartGen) global._lastChartGen = {};
-      const _chartNow = Date.now();
-      if (!global._lastChartGen[safeInstrumentName] || (_chartNow - global._lastChartGen[safeInstrumentName]) >= 60000) {
-        global._lastChartGen[safeInstrumentName] = _chartNow;
+
+      // ── 2b: MongoDB write (primary store for historical queries) ────────────
+      (async () => {
         try {
-          if (generateAllChartData) generateAllChartData(safeInstrumentName, expiryDate, istDateFolder);
-        } catch (_) {}
+          const { connectDB } = require('./db/mongoose');
+          const { OptionChain } = require('./db/models/OptionChain');
+          await connectDB();
+          const _gz = zlib.gzipSync(Buffer.from(JSON.stringify({ m: dataToSave.m, a: dataToSave.a, oc: dataToSave.oc })));
+          await OptionChain.create({
+            symbol: safeInstrumentName,
+            expiry: expiryDate,
+            date:   istDateFolder,
+            time:   currentIST.time,
+            ts:     currentIST.iso ? new Date(currentIST.iso) : new Date(),
+            gz:     _gz,
+          });
+        } catch (mongoErr) {
+          log(`⚠️ MongoDB write failed for ${safeInstrumentName}: ${mongoErr.message}`);
+        }
+      })();
+
+      // Chart generation — throttled to once per 5 minutes per instrument.
+      // generateAllChartData reads 100+ .gz files + writes 7 chart files synchronously.
+      // We queue it and process one instrument at a time (setImmediate between each)
+      // so concurrent saves never stack up multiple blocking chart-gen calls.
+      if (!global._lastChartGen)  global._lastChartGen  = {};
+      if (!global._chartGenQueue) global._chartGenQueue = [];
+      if (!global._chartGenRunning) global._chartGenRunning = false;
+
+      const _chartNow = Date.now();
+      const _chartThrottle = 300_000; // 5 minutes
+      if (!global._lastChartGen[safeInstrumentName] ||
+          (_chartNow - global._lastChartGen[safeInstrumentName]) >= _chartThrottle) {
+        global._lastChartGen[safeInstrumentName] = _chartNow;
+        // Enqueue — deduplicate (don't queue same instrument twice)
+        const alreadyQueued = global._chartGenQueue.some(q => q.name === safeInstrumentName);
+        if (!alreadyQueued && generateAllChartData) {
+          global._chartGenQueue.push({ name: safeInstrumentName, expiry: expiryDate, date: istDateFolder });
+        }
+        // Drain the queue — one item per setImmediate tick so HTTP/WS is never starved
+        if (!global._chartGenRunning) {
+          global._chartGenRunning = true;
+          function drainChartQueue() {
+            const item = global._chartGenQueue.shift();
+            if (!item) { global._chartGenRunning = false; return; }
+            try { generateAllChartData(item.name, item.expiry, item.date); } catch (_) {}
+            setImmediate(drainChartQueue); // yield after each instrument
+          }
+          setImmediate(drainChartQueue);
+        }
       }
     });
 
@@ -1396,19 +1526,19 @@ async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKe
 
 function getAvailableInstruments() {
   try {
-    const dataDir = PATHS.MARKET;
-    if (!fs.existsSync(dataDir)) return [];
-    
-    return fs.readdirSync(dataDir, { withFileTypes: true })
-      .filter(dirent => dirent.isDirectory())
-      .map(dirent => dirent.name);
+    // Return exactly the configured instruments in order (indices first, then stocks alphabetically).
+    // Never include legacy disk folders — symbol list must match CONFIG.INSTRUMENTS exactly.
+    return (CONFIG.INSTRUMENTS || [])
+      .map(k => createSafeFolderName(getInstrumentName(k)))
+      .filter(n => n && !n.includes('|'));
   } catch (error) {
     return [];
   }
 }
 
 // Fetch + save one instrument. Returns { name, size_kb } on success, null on skip/fail.
-async function updateOptionChain(instrumentKey = CONFIG.INSTRUMENT_KEY) {
+// tok1 = primary expiry token, tok2 = secondary expiry token (passed per-instrument from updateAllInstruments)
+async function updateOptionChain(instrumentKey = CONFIG.INSTRUMENT_KEY, tok1 = null, tok2 = null) {
   const cached = _contractCache[instrumentKey];
   if (!cached?.dates?.length) return null;
 
@@ -1419,14 +1549,57 @@ async function updateOptionChain(instrumentKey = CONFIG.INSTRUMENT_KEY) {
   serverState.availableExpiries = expiryInfo.allExpiries;
   serverState.expiriesToFetch  = expiryInfo.expiriesToFetch;
 
-  const expiry = expiryInfo.expiriesToFetch[0];
-  // If both tokens are rate-limited, skip silently
-  if (!getActiveToken()) return null;
+  const primaryExpiry   = expiryInfo.expiriesToFetch[0];
+  // Nifty 50 and SENSEX fetch both current + next expiry; all other instruments use current only
+  const TWO_EXPIRY_INSTRUMENTS = new Set(['NSE_INDEX|Nifty 50', 'BSE_INDEX|SENSEX']);
+  const secondaryExpiry = (TWO_EXPIRY_INSTRUMENTS.has(instrumentKey) && expiryInfo.expiriesToFetch[1]) || null;
+
+  const primaryToken   = tok1 || getActiveToken();
+  const secondaryToken = tok2 || getSecondaryToken();
+  if (!primaryToken) return null;
 
   try {
-    const chainData = await fetchOptionChain(expiry, instrumentKey);
-    const analysis  = analyzeOptionChain(chainData);
-    const saved     = saveOptionChainData(expiry, chainData, analysis, instrumentKey);
+    // Fetch both expiries in parallel — each uses its own assigned key
+    const fetches = [fetchOptionChain(primaryExpiry, instrumentKey, primaryToken)];
+    if (secondaryExpiry) fetches.push(fetchOptionChain(secondaryExpiry, instrumentKey, secondaryToken));
+    const [primaryData, secondaryData] = await Promise.all(fetches);
+
+    // Primary: full save (disk + RAM cache + WS publish)
+    // Pass expiriesToFetch so liveCache shows both expiry buttons from the first cycle
+    const primaryAnalysis = analyzeOptionChain(primaryData);
+    await saveOptionChainData(primaryExpiry, primaryData, primaryAnalysis, instrumentKey, false, expiryInfo.expiriesToFetch);
+
+    // Secondary: disk save only (no liveCache overwrite), then attach chain to snapshot
+    if (secondaryExpiry && secondaryData) {
+      const secondaryAnalysis = analyzeOptionChain(secondaryData);
+      // Disk save in background — don't await so it doesn't block WS delivery
+      saveOptionChainData(secondaryExpiry, secondaryData, secondaryAnalysis, instrumentKey, true)
+        .catch(() => {});
+
+      // Patch liveCache snapshot to include both chains
+      const instrName  = createSafeFolderName(getInstrumentName(instrumentKey));
+      const cacheKey   = instrName.toUpperCase();
+      const snap       = liveCache.get(cacheKey);
+      if (snap) {
+        const secondaryChain = processChainRows(secondaryData.data || []);
+        const mergedChains   = { ...(snap.chains || {}), [primaryExpiry]: snap.chain, [secondaryExpiry]: secondaryChain };
+        const updatedSnap = {
+          ...snap,
+          chains: mergedChains,
+          availableExpiries: expiryInfo.expiriesToFetch,
+          nextExpiry: secondaryExpiry,
+        };
+        liveCache.set(cacheKey, updatedSnap);
+        // Send diff (not null) so existing WS clients receive the secondary chain immediately
+        const secDiff = { chains: mergedChains, availableExpiries: expiryInfo.expiriesToFetch, nextExpiry: secondaryExpiry };
+        publishUpdate(cacheKey, updatedSnap, secDiff).catch(() => {});
+        try { require('./api/chain').notifyLiveCacheUpdated(cacheKey, updatedSnap); } catch (_) {}
+        if (process.send) {
+          try { process.send({ type: 'lc', symbol: cacheKey, data: JSON.stringify(updatedSnap) }); } catch (_) {}
+        }
+      }
+    }
+
     serverState.lastUpdate    = new Date().toISOString();
     serverState.lastUpdateIST = getCurrentIST().datetime;
     serverState.totalUpdates++;
@@ -1437,29 +1610,38 @@ async function updateOptionChain(instrumentKey = CONFIG.INSTRUMENT_KEY) {
 }
 
 // UPDATE ALL INSTRUMENTS
-// Processes in batches of CONCURRENCY to avoid flooding the event loop.
-// Between batches we yield (setImmediate) so login / WS / API requests
-// can be handled without waiting for the entire cycle to finish.
-const FETCH_CONCURRENCY = 5; // process 5 instruments at a time — avoids flooding event loop
+// Each instrument gets its own token pair from the available pool (round-robin).
+// With N keys and M instruments: instrument i uses keys[i%N] + keys[(i+1)%N].
+// This maximises parallel throughput while respecting per-key rate limits.
+const FETCH_CONCURRENCY = 5; // kept for reference — no longer used for batching
 
 async function updateAllInstruments() {
   if (serverState.isUpdating) return [];
   serverState.isUpdating = true;
-  const allResults = [];
   try {
     const instruments = CONFIG.INSTRUMENTS || [CONFIG.INSTRUMENT_KEY];
-    for (let i = 0; i < instruments.length; i += FETCH_CONCURRENCY) {
-      const batch   = instruments.slice(i, i + FETCH_CONCURRENCY);
-      const settled = await Promise.allSettled(batch.map(inst => updateOptionChain(inst)));
-      allResults.push(...settled.map((r, j) => ({
-        instrument: batch[j],
-        success: r.status === 'fulfilled' && !!r.value
-      })));
-      // Yield to event loop between batches — pending HTTP/login requests get served here
-      if (i + FETCH_CONCURRENCY < instruments.length) {
-        await new Promise(resolve => setImmediate(resolve));
-      }
+
+    // Get all non-rate-limited tokens — distribute round-robin across instruments
+    const now = Date.now();
+    const tokens = _getTokens().filter(t => now >= (_tokenRateLimitUntil[t.id] || 0));
+    if (!tokens.length) {
+      log(`⚠️ All API keys rate-limited — skipping cycle`);
+      return [];
     }
+    log(`🔑 Using ${tokens.length} key(s) across ${instruments.length} instrument(s)`);
+    // Advance global index so keys rotate each cycle
+    _activeTokenIdx = (_activeTokenIdx + 1) % tokens.length;
+
+    // Each instrument gets its own primary + secondary token (different keys when possible)
+    const settled = await Promise.allSettled(instruments.map((inst, i) => {
+      const tok1 = tokens[i % tokens.length].token;
+      const tok2 = tokens[(i + 1) % tokens.length].token;
+      return updateOptionChain(inst, tok1, tok2);
+    }));
+    const allResults = settled.map((r, j) => ({
+      instrument: instruments[j],
+      success: r.status === 'fulfilled' && !!r.value
+    }));
     const successCount = allResults.filter(r => r.success).length;
     log(`✅ ${getCurrentIST().time} | Data saved (${successCount}/${instruments.length})`);
     return allResults;
@@ -1529,7 +1711,7 @@ function findLatestSavedFile() {
 function getExpiriesFromDisk(instrumentKey) {
   try {
     const symbol  = createSafeFolderName(getInstrumentName(instrumentKey));
-    const symDir  = path.join('Data', symbol);
+    const symDir  = path.join(PATHS.MARKET, symbol);
     if (!fs.existsSync(symDir)) return null;
     const today   = getISTToday();
     // Find expiry folders that are still valid (>= today), sorted ascending
@@ -1548,33 +1730,53 @@ async function warmExpiryCache(force = false) {
   const today = getISTToday();
 
   // Skip if already warmed today (e.g. schedule restart, admin Start button, PM2 reload).
-  // Pass force=true only for the deliberate 09:01 daily refresh.
+  // Pass force=true only for the deliberate 09:15 daily refresh.
   if (!force && _expiryCacheWarmDate === today) {
     log(`📅 Expiry cache already warm for ${today} — skipping`);
     return;
   }
 
   const instruments = CONFIG.INSTRUMENTS || [CONFIG.INSTRUMENT_KEY];
-  let apiNeeded     = [];
+  const apiNeeded   = [];
+
+  // Only these instruments actually need 2 expiries — all others are fine with 1 from disk.
+  // Calling API for 50+ single-expiry stocks just to confirm they have 1 expiry wastes 30s.
+  const TWO_EXPIRY_SET = new Set(['NSE_INDEX|Nifty 50', 'BSE_INDEX|SENSEX']);
 
   for (const inst of instruments) {
-    const fromDisk = getExpiriesFromDisk(inst);
-    if (fromDisk?.length) {
-      // Use disk — no API call needed
-      _contractCache[inst] = { dates: fromDisk, day: today };
-      // per-instrument expiry log suppressed — summary below
+    if (force) {
+      // Daily force refresh — always call API to pick up fresh contract list
+      delete _contractCache[inst];
+      apiNeeded.push(inst);
     } else {
-      apiNeeded.push(inst); // no data on disk yet
+      const fromDisk = getExpiriesFromDisk(inst);
+      if (fromDisk?.length >= 2) {
+        // Disk already has 2+ future expiries — use it (zero API calls)
+        _contractCache[inst] = { dates: fromDisk, day: today };
+      } else if (fromDisk?.length === 1) {
+        if (TWO_EXPIRY_SET.has(inst)) {
+          // This instrument needs 2 expiries — call API to get the second one
+          delete _contractCache[inst];
+          apiNeeded.push(inst);
+        } else {
+          // 1 expiry is sufficient for this instrument — use disk, skip API
+          _contractCache[inst] = { dates: fromDisk, day: today };
+        }
+      } else {
+        apiNeeded.push(inst); // no disk data yet (first run)
+      }
     }
   }
 
-  // Only hit Upstox API for instruments with no existing data (rare: first run)
   if (apiNeeded.length > 0) {
-    log(`📅 Fetching expiry from API for ${apiNeeded.length} new instrument(s)...`);
+    log(`📅 Fetching expiry from API for ${apiNeeded.length} instrument(s)...`);
     for (let i = 0; i < apiNeeded.length; i++) {
       try {
         await getAllExpiryDates(apiNeeded[i]);
       } catch (e) {
+        // API failed — fall back to disk so fetching can still run
+        const fromDisk = getExpiriesFromDisk(apiNeeded[i]);
+        if (fromDisk?.length) _contractCache[apiNeeded[i]] = { dates: fromDisk, day: today };
         log(`⚠️  Expiry API fetch failed for ${getInstrumentName(apiNeeded[i])}: ${e.message}`);
       }
       if (i < apiNeeded.length - 1) await new Promise(r => setTimeout(r, 600));
@@ -1605,12 +1807,19 @@ function startAutoRefresh() {
 }
 
 function startFetching(isScheduled = false) {
+  // In cluster mode, only the designated fetcher worker runs the cycle
+  if (process.env.CLUSTER_ROLE && process.env.CLUSTER_ROLE !== 'fetcher') {
+    log('ℹ️  Fetch skipped — not the fetcher worker in cluster mode');
+    return false;
+  }
   // If already running, stop first then restart fresh
   if (serverState.autoRefreshInterval) {
     clearTimeout(serverState.autoRefreshInterval);
     serverState.autoRefreshInterval = null;
     log('🔄 Restarting data fetching...');
   }
+  // Reset warm-date so warmExpiryCache runs again (picks up new expiry if only 1 was on disk)
+  _expiryCacheWarmDate = '';
 
   if (!isScheduled) {
     serverState.isManualRunning = true;
@@ -1721,13 +1930,13 @@ setInterval(() => {
 // ADMIN AUTHENTICATION
 function authenticateAdmin(req, res, next) {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
-  
+
   const token = authHeader.substring(7);
-  
+
   if (token === Buffer.from(`${CONFIG.ADMIN_USERNAME}:${CONFIG.ADMIN_PASSWORD}`).toString('base64')) {
     next();
   } else {
@@ -1735,16 +1944,29 @@ function authenticateAdmin(req, res, next) {
   }
 }
 
+// Accepts EITHER Bearer token (admin panel system auth) OR session admin role (main app login)
+function requireAdminAccess(req, res, next) {
+  // Session-based: user logged in as admin via main app
+  if (req.session?.userId && req.session?.userRole === 'admin') return next();
+  // Bearer-based: admin system token
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    if (token === Buffer.from(`${CONFIG.ADMIN_USERNAME}:${CONFIG.ADMIN_PASSWORD}`).toString('base64')) {
+      return next();
+    }
+  }
+  return res.status(401).json({ success: false, message: 'Admin access required' });
+}
+
 // ── TEAM MEMBERS ─────────────────────────────────────────────────────────────
 const multer = require('multer');
-const TEAM_DIR  = PATHS.TEAM;
-const USERS_DIR = PATHS.USERS;
+const TEAM_DIR = PATHS.TEAM;
 
-// Read role directly from user file (session may not have userRole)
-const getUserRole = (userId) => {
+const getUserRole = async (userId) => {
   try {
-    const u = JSON.parse(fs.readFileSync(path.join(USERS_DIR, `${userId}.json`), 'utf8'));
-    return u.role || 'user';
+    const u = await User.findOne({ userId }).select('role').lean();
+    return u?.role || 'user';
   } catch { return 'user'; }
 };
 if (!fs.existsSync(TEAM_DIR)) fs.mkdirSync(TEAM_DIR, { recursive: true });
@@ -1807,8 +2029,8 @@ app.get('/api/team/photo/:id', (req, res) => {
 });
 
 // POST /api/admin/team — add member (admin only)
-app.post('/api/admin/team', requireAuth, teamUpload.single('photo'), (req, res) => {
-  if (getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
+app.post('/api/admin/team', requireAuth, teamUpload.single('photo'), async (req, res) => {
+  if (await getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const { name, designation, experience } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
   const files = fs.readdirSync(TEAM_DIR).filter(f => /^card\d+\.json$/.test(f));
@@ -1821,8 +2043,8 @@ app.post('/api/admin/team', requireAuth, teamUpload.single('photo'), (req, res) 
 });
 
 // PUT /api/admin/team/:id — update member (admin only)
-app.put('/api/admin/team/:id', requireAuth, teamUpload.single('photo'), (req, res) => {
-  if (getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
+app.put('/api/admin/team/:id', requireAuth, teamUpload.single('photo'), async (req, res) => {
+  if (await getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const id = parseInt(req.params.id);
   const jsonPath = path.join(TEAM_DIR, `card${id}.json`);
   if (!fs.existsSync(jsonPath)) return res.status(404).json({ error: 'Not found' });
@@ -1835,8 +2057,8 @@ app.put('/api/admin/team/:id', requireAuth, teamUpload.single('photo'), (req, re
 });
 
 // DELETE /api/admin/team/:id — delete member (admin only)
-app.delete('/api/admin/team/:id', requireAuth, (req, res) => {
-  if (getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
+app.delete('/api/admin/team/:id', requireAuth, async (req, res) => {
+  if (await getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const id = parseInt(req.params.id);
   const jsonPath = path.join(TEAM_DIR, `card${id}.json`);
   if (!fs.existsSync(jsonPath)) return res.status(404).json({ error: 'Not found' });
@@ -1848,8 +2070,8 @@ app.delete('/api/admin/team/:id', requireAuth, (req, res) => {
 
 // POST /api/admin/bromos-gap-update — manually trigger gap-open Bromos recalc
 // (admin only; useful for testing or when 9:09 AM scheduler was missed)
-app.post('/api/admin/bromos-gap-update', requireAuth, (req, res) => {
-  if (getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
+app.post('/api/admin/bromos-gap-update', requireAuth, async (req, res) => {
+  if (await getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
     // Gap-correct all historical _chart_strategy40.json files
     if (generateBromosOpenForAllDates) generateBromosOpenForAllDates();
@@ -1866,10 +2088,8 @@ app.post('/api/admin/bromos-gap-update', requireAuth, (req, res) => {
   }
 });
 
-// ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
-const NOTIF_DIR      = PATHS.NOTIFICATIONS;
-const NOTIF_SEEN_DIR = path.join(NOTIF_DIR, 'seen');
-[NOTIF_DIR, NOTIF_SEEN_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
+// ── NOTIFICATIONS (MongoDB-backed) ────────────────────────────────────────────
+const { Notification } = require('./db/models/Notification');
 
 const notifUpload = multer({
   storage: multer.memoryStorage(),
@@ -1880,78 +2100,91 @@ const notifUpload = multer({
   },
 });
 
-const readNotifSeen  = (uid) => { try { const p = path.join(NOTIF_SEEN_DIR, `${uid}.json`); return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p,'utf8')) : {}; } catch { return {}; } };
-const writeNotifSeen = (uid, data) => fs.writeFileSync(path.join(NOTIF_SEEN_DIR, `${uid}.json`), JSON.stringify(data));
-const allNotifs      = () => { try { return fs.readdirSync(NOTIF_DIR).filter(f => /^notif\d+\.json$/.test(f)).map(f => { try { const d = JSON.parse(fs.readFileSync(path.join(NOTIF_DIR,f),'utf8')); d.hasFile = fs.existsSync(path.join(NOTIF_DIR,`notif${d.id}file`)); return d; } catch { return null; } }).filter(Boolean).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt)); } catch { return []; } };
-
 // GET /api/notifications
-app.get('/api/notifications', requireAuth, (req, res) => {
-  const seen = readNotifSeen(req.session.userId);
-  const notifs = allNotifs().map(n => ({ ...n, seenCount: seen[n.id] || 0, seen: (seen[n.id] || 0) > 0 }));
-  res.json({ success: true, notifications: notifs });
+app.get('/api/notifications', requireAuth, async (req, res) => {
+  try {
+    const uid = req.session.userId;
+    const all = await Notification.find({}).sort({ createdAt: -1 }).lean();
+    res.json({ success: true, notifications: all.map(n => ({
+      id: n.id, title: n.title, message: n.message,
+      hasFile: n.hasFile, fileType: n.fileType, fileName: n.fileName,
+      createdAt: n.createdAt, seen: n.seenBy.includes(uid),
+    })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// GET /api/notifications/popup — unseen (shown < 5 times)
-app.get('/api/notifications/popup', requireAuth, (req, res) => {
-  const seen = readNotifSeen(req.session.userId);
-  const popup = allNotifs().filter(n => (seen[n.id] || 0) < 5);
-  res.json({ success: true, notifications: popup });
+// GET /api/notifications/popup — notifications not yet seen by this user
+app.get('/api/notifications/popup', requireAuth, async (req, res) => {
+  try {
+    const uid = req.session.userId;
+    const popup = await Notification.find({ seenBy: { $nin: [uid] } }).sort({ createdAt: -1 }).lean();
+    res.json({ success: true, notifications: popup.map(n => ({
+      id: n.id, title: n.title, message: n.message, hasFile: n.hasFile, createdAt: n.createdAt,
+    })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/notifications/:id/seen — increment seen count
-app.post('/api/notifications/:id/seen', requireAuth, (req, res) => {
-  const id = String(parseInt(req.params.id));
-  const seen = readNotifSeen(req.session.userId);
-  seen[id] = (seen[id] || 0) + 1;
-  writeNotifSeen(req.session.userId, seen);
-  res.json({ success: true });
+// POST /api/notifications/:id/seen — mark as seen for this user
+app.post('/api/notifications/:id/seen', requireAuth, async (req, res) => {
+  try {
+    await Notification.updateOne({ id: parseInt(req.params.id) }, { $addToSet: { seenBy: req.session.userId } });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // POST /api/notifications/seen-all
-app.post('/api/notifications/seen-all', requireAuth, (req, res) => {
-  const seen = readNotifSeen(req.session.userId);
-  allNotifs().forEach(n => { seen[String(n.id)] = Math.max(5, seen[String(n.id)] || 0); });
-  writeNotifSeen(req.session.userId, seen);
-  res.json({ success: true });
+app.post('/api/notifications/seen-all', requireAuth, async (req, res) => {
+  try {
+    await Notification.updateMany({}, { $addToSet: { seenBy: req.session.userId } });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// GET /api/notifications/file/:id
-app.get('/api/notifications/file/:id', requireAuth, (req, res) => {
-  const id = parseInt(req.params.id);
-  const filePath = path.join(NOTIF_DIR, `notif${id}file`);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'No file' });
+// GET /api/notifications/file/:id — serve file stored in MongoDB
+app.get('/api/notifications/file/:id', requireAuth, async (req, res) => {
   try {
-    const meta = JSON.parse(fs.readFileSync(path.join(NOTIF_DIR, `notif${id}.json`), 'utf8'));
-    if (meta.fileType) res.setHeader('Content-Type', meta.fileType);
-    if (meta.fileName) res.setHeader('Content-Disposition', `inline; filename="${meta.fileName}"`);
-  } catch {}
-  res.sendFile(filePath);
+    const notif = await Notification.findOne({ id: parseInt(req.params.id) }).lean();
+    if (!notif?.fileData) return res.status(404).json({ error: 'No file' });
+    if (notif.fileType) res.setHeader('Content-Type', notif.fileType);
+    if (notif.fileName) res.setHeader('Content-Disposition', `inline; filename="${notif.fileName}"`);
+    res.send(notif.fileData);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // POST /api/admin/notifications — create (admin only)
-app.post('/api/admin/notifications', requireAuth, notifUpload.single('file'), (req, res) => {
-  if (getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
+app.post('/api/admin/notifications', requireAuth, notifUpload.single('file'), async (req, res) => {
+  if (await getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
   const { title, message } = req.body;
   if (!title?.trim() && !message?.trim()) return res.status(400).json({ error: 'Title or message required' });
-  const files = fs.readdirSync(NOTIF_DIR).filter(f => /^notif\d+\.json$/.test(f));
-  const ids = files.map(f => parseInt(f.match(/^notif(\d+)\.json$/)[1]));
-  const nextId = ids.length > 0 ? Math.max(...ids) + 1 : 1;
-  const notif = { id: nextId, title: (title||'').trim(), message: (message||'').trim(), createdAt: new Date().toISOString(), hasFile: !!req.file, fileType: req.file?.mimetype||null, fileName: req.file?.originalname||null };
-  fs.writeFileSync(path.join(NOTIF_DIR, `notif${nextId}.json`), JSON.stringify(notif, null, 2));
-  if (req.file) fs.writeFileSync(path.join(NOTIF_DIR, `notif${nextId}file`), req.file.buffer);
-  res.json({ success: true, notification: { ...notif, hasFile: !!req.file } });
+  try {
+    const last = await Notification.findOne({}).sort({ id: -1 }).lean();
+    const nextId = last ? last.id + 1 : 1;
+    const notif = await Notification.create({
+      id: nextId,
+      title: (title || '').trim(),
+      message: (message || '').trim(),
+      hasFile: !!req.file,
+      fileType: req.file?.mimetype || null,
+      fileName: req.file?.originalname || null,
+      fileData: req.file ? req.file.buffer : null,
+      seenBy: [],
+    });
+    res.json({ success: true, notification: {
+      id: notif.id, title: notif.title, message: notif.message,
+      hasFile: notif.hasFile, fileType: notif.fileType, fileName: notif.fileName,
+      createdAt: notif.createdAt,
+    }});
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // DELETE /api/admin/notifications/:id
-app.delete('/api/admin/notifications/:id', requireAuth, (req, res) => {
-  if (getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
-  const id = parseInt(req.params.id);
-  const jsonPath = path.join(NOTIF_DIR, `notif${id}.json`);
-  if (!fs.existsSync(jsonPath)) return res.status(404).json({ error: 'Not found' });
-  fs.unlinkSync(jsonPath);
-  const fp = path.join(NOTIF_DIR, `notif${id}file`);
-  if (fs.existsSync(fp)) fs.unlinkSync(fp);
-  res.json({ success: true });
+app.delete('/api/admin/notifications/:id', requireAuth, async (req, res) => {
+  if (await getUserRole(req.session.userId) !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  try {
+    const result = await Notification.deleteOne({ id: parseInt(req.params.id) });
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ADMIN API ENDPOINTS
@@ -1993,7 +2226,8 @@ app.get("/api/admin/status", authenticateAdmin, (req, res) => {
         schedule_enabled: serverState.scheduleEnabled,
         last_update: serverState.lastUpdateIST,
         total_updates: serverState.totalUpdates,
-        current_expiry: serverState.currentExpiry
+        current_expiry: serverState.currentExpiry,
+        refresh_interval_seconds: CONFIG.REFRESH_INTERVAL / 1000
       }
     });
   } catch (error) {
@@ -2007,25 +2241,21 @@ app.get("/api/admin/status", authenticateAdmin, (req, res) => {
 
 app.post("/api/admin/start", authenticateAdmin, (req, res) => {
   try {
-    const result = startFetching();
-    
-    if (result) {
-      res.json({
-        success: true,
-        message: 'Data fetching started'
-      });
-    } else {
-      res.json({
-        success: false,
-        message: 'Fetching is already running'
-      });
+    // Optional interval override — clamp to allowed values (1–60s)
+    const reqInterval = parseInt(req.body?.interval_seconds);
+    if (reqInterval && reqInterval >= 1 && reqInterval <= 60) {
+      CONFIG.REFRESH_INTERVAL = reqInterval * 1000;
+      log(`⏱ Fetch interval set to ${reqInterval}s`);
     }
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Error starting fetching',
-      error: error.message
+
+    const result = startFetching();
+    res.json({
+      success: true,
+      message: result ? 'Data fetching started' : 'Fetching restarted with new interval',
+      interval_seconds: CONFIG.REFRESH_INTERVAL / 1000,
     });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error starting fetching', error: error.message });
   }
 });
 
@@ -2103,7 +2333,7 @@ app.post("/api/admin/schedule", authenticateAdmin, (req, res) => {
 });
 
 // Update access token 2 (failover key)
-app.post("/api/admin/token2", authenticateAdmin, (req, res) => {
+app.post("/api/admin/token2", requireAdminAccess, (req, res) => {
   try {
     const { access_token } = req.body;
     if (!access_token) return res.status(400).json({ success: false, message: 'Token required' });
@@ -2131,7 +2361,7 @@ app.post("/api/admin/token2", authenticateAdmin, (req, res) => {
 });
 
 // Update access token
-app.post("/api/admin/token", authenticateAdmin, (req, res) => {
+app.post("/api/admin/token", requireAdminAccess, (req, res) => {
   try {
     const { access_token } = req.body;
     
@@ -2163,10 +2393,11 @@ app.post("/api/admin/token", authenticateAdmin, (req, res) => {
       
       fs.writeFileSync(envPath, envContent);
       log(`✅ Access token updated in .env file`);
-      
+      _expiryCacheWarmDate = '';
+      startFetching(serverState.isScheduledRunning);
       res.json({
         success: true,
-        message: 'Access token updated successfully (both in memory and .env file)'
+        message: 'Access token updated successfully. Fetching restarted.'
       });
     } catch (envError) {
       log(`⚠️ Token updated in memory but failed to update .env: ${envError.message}`, "WARNING");
@@ -2273,7 +2504,12 @@ app.patch('/api/admin/upstox-apps/:id/token', authenticateAdmin, (req, res) => {
   if (active[0]) { CONFIG.ACCESS_TOKEN   = active[0].access_token; updateEnvKey('ACCESS_TOKEN',   active[0].access_token); }
   if (active[1]) { CONFIG.ACCESS_TOKEN_2 = active[1].access_token; updateEnvKey('ACCESS_TOKEN_2', active[1].access_token); }
   log(`✅ Token manually set for app: ${apps[idx].name} (id=${id}) — token ${access_token ? 'saved' : 'cleared'}`);
-  res.json({ success: true, message: access_token ? 'Token saved!' : 'Token cleared' });
+  // Reset expiry cache so it re-warms with the new token, then restart fetching
+  if (access_token) {
+    _expiryCacheWarmDate = '';
+    startFetching(serverState.isScheduledRunning);
+  }
+  res.json({ success: true, message: access_token ? 'Token saved! Fetching restarted.' : 'Token cleared' });
 });
 
 // ── DELETE /api/admin/upstox-apps/:id ────────────────────────────────────────
@@ -2332,18 +2568,23 @@ setInterval(async () => {
 }, 60_000);
 
 // ── GET /api/admin/upstox-auth/start-all ─────────────────────────────────────
-// Entry point: email links here → chains through all apps one by one
+// Entry point: email links here → chains through ALL apps one by one.
+// Always re-authorizes every app regardless of existing token (daily renewal).
 app.get('/api/admin/upstox-auth/start-all', (req, res) => {
   const apps = loadApps();
-  const next = apps.find(a => !a.access_token && a.api_key && a.api_secret && a.redirect_uri);
-  if (!next) {
-    return res.send(`<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;text-align:center;padding:60px;background:#f0fff8">
-      <h2 style="color:#26a69a">✅ All Apps Already Authorized</h2>
-      <p style="color:#555">All ${apps.length} app(s) already have active tokens.</p>
-      <p style="color:#aaa;font-size:12px">You can close this window.</p>
+  // All apps with full config — authorize them all, tokens or not
+  const first = apps.find(a => a.api_key && a.api_secret && a.redirect_uri);
+  if (!first) {
+    return res.send(`<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;text-align:center;padding:60px;background:#fff8f8">
+      <h2 style="color:#c00">⚠️ No Apps Configured</h2>
+      <p style="color:#555">No Upstox apps have api_key + api_secret + redirect_uri set.</p>
+      <p style="color:#aaa;font-size:12px">Configure apps in the Admin Panel first.</p>
     </body></html>`);
   }
-  res.redirect(buildAppAuthUrl(next));
+  // Clear all tokens so callback chaining visits every app
+  apps.forEach(a => { a.access_token = ''; });
+  saveApps(apps);
+  res.redirect(buildAppAuthUrl(first));
 });
 
 // ── GET /api/admin/upstox-auth/callback ──────────────────────────────────────
@@ -2370,8 +2611,8 @@ app.get('/api/admin/upstox-auth/callback', async (req, res) => {
       if (active[0]) { CONFIG.ACCESS_TOKEN   = active[0].access_token; updateEnvKey('ACCESS_TOKEN',   active[0].access_token); }
       if (active[1]) { CONFIG.ACCESS_TOKEN_2 = active[1].access_token; updateEnvKey('ACCESS_TOKEN_2', active[1].access_token); }
       log(`✅ Token generated for "${found.name}" (id=${appId}) and saved`);
-      // Chain to next app that still needs a token
-      const nextApp = apps.find(a => !a.access_token && a.api_key && a.api_secret && a.redirect_uri);
+      // Chain to the next configured app (by id order, regardless of token status)
+      const nextApp = apps.find(a => a.id > appId && a.api_key && a.api_secret && a.redirect_uri);
       if (nextApp) {
         const nextUrl = buildAppAuthUrl(nextApp);
         return res.send(`<!DOCTYPE html><html><head><meta http-equiv="refresh" content="2;url=${nextUrl}"></head>
@@ -2666,7 +2907,20 @@ app.post("/api/instruments/active", authenticateAdmin, (req, res) => {
       });
     }
 
+    // Evict deactivated symbols from RAM + Redis so stale data never lingers
+    const oldSymbols = (CONFIG.INSTRUMENTS || []).map(k => createSafeFolderName(getInstrumentName(k)));
+    const newSymbols = new Set(instruments.map(k => createSafeFolderName(getInstrumentName(k))));
+    const { pub: redisPub } = require('./ws/redis');
+    oldSymbols.forEach(sym => {
+      if (!newSymbols.has(sym)) {
+        liveCache.delete(sym);
+        redisPub.del(`WS_FULL:${sym}`).catch(() => {});
+        redisPub.del(`lc:${sym}`).catch(() => {});
+      }
+    });
+
     CONFIG.INSTRUMENTS = instruments;
+    setConfiguredSymbols(getAvailableInstruments());
 
     // Persist so selection survives server restart
     fs.writeFileSync(PATHS.INSTRUMENTS_CFG, JSON.stringify({ instruments }, null, 2));
@@ -3138,6 +3392,8 @@ async function startServer() {
     } catch (e) {
       log(`⚠️ Could not load instruments config: ${e.message}`);
     }
+    // Sync ordered symbol list to chain.js (after instruments.json is loaded)
+    setConfiguredSymbols(getAvailableInstruments());
 
     await initMarketData();
     startTokenScheduler();
@@ -3223,9 +3479,42 @@ async function startServer() {
     const { setupWebSocket, warmAllSymbolsFromDisk } = require('./ws/websocket');
     setupWebSocket(httpServer2);
 
-    // Pre-warm ALL symbols from disk into Redis + liveCache before any user connects.
-    // New live data from Upstox overwrites Redis key (TTL resets), old data is gone.
-    warmAllSymbolsFromDisk().catch(e => console.error('[WS] Warm-up error:', e));
+    // Pre-warm ALL symbols into liveCache + Redis, then immediately build prefetch gzip
+    // so the very first user request hits the fast path instead of cold-loading from disk.
+    warmAllSymbolsFromDisk()
+      .then(() => refreshPrefetchGzip().catch(() => {}))
+      .catch(e => console.error('[WS] Warm-up error:', e));
+
+    // ── Socket.IO — live option chain tick-by-tick ─────────────────────────────
+    const socketIO = require('./ws/socketio');
+    socketIO.attach(httpServer2);
+
+    // ── Upstox WebSocket tick feed ─────────────────────────────────────────────
+    const upstoxWs = require('./ws/upstoxWs');
+    upstoxWs.connect(CONFIG).catch(e => console.error('[UpstoxWS] Connect error:', e.message));
+
+    // ── OI baseline refresh every 30s from REST (feeds oi_chg in tick stream) ──
+    let _oiBaselineTimer = null;
+    function _scheduleOiBaseline() {
+      _oiBaselineTimer = setTimeout(async () => {
+        try {
+          const instruments = CONFIG.INSTRUMENTS || [];
+          for (const instKey of instruments) {
+            const token = getActiveToken();
+            if (!token) break;
+            const cached = _contractCache[instKey];
+            if (!cached?.dates?.length) continue;
+            const expiry = getExpiriesToFetch(cached.dates).current;
+            try {
+              const resp = await fetchOptionChain(expiry, instKey, token);
+              if (resp?.data) upstoxWs.updateOiBaseline(resp.data);
+            } catch (_) {}
+          }
+        } catch (_) {}
+        _scheduleOiBaseline();
+      }, 30000);
+    }
+    _scheduleOiBaseline();
 
     // ── Crypto feed (Delta Exchange WebSocket) ────────────────────────────────
     const cryptoFeed = require('./crypto/cryptoFeed');
@@ -3325,57 +3614,85 @@ async function startServer() {
         checkSchedule();
       }, 1000);
 
-      // ── Startup data check: generate missing files for all date folders ──
+      // ── Pre-warm liveCache from MongoDB → disk fallback (2 s after start) ────
+      // Ensures the FIRST user request after a server restart hits RAM, not disk.
+      setTimeout(async () => {
+        try {
+          const { OptionChain } = require('./db/models/OptionChain');
+          // Get latest snapshot per symbol from MongoDB
+          const latest = await OptionChain.aggregate([
+            { $sort: { ts: -1 } },
+            { $group: { _id: '$symbol', doc: { $first: '$$ROOT' } } },
+            { $replaceRoot: { newRoot: '$doc' } },
+          ]);
+          let warmed = 0;
+          for (const snap of latest) {
+            await new Promise(r => setImmediate(r)); // yield per symbol
+            try {
+              const { loadLiveFromDB } = require('./api/chain');
+              await loadLiveFromDB(snap.symbol, snap);
+              warmed++;
+            } catch (_) {}
+          }
+          // Fallback: disk symbols not yet in MongoDB
+          const marketDir = PATHS.MARKET;
+          if (fs.existsSync(marketDir)) {
+            const diskSyms = fs.readdirSync(marketDir, { withFileTypes: true })
+              .filter(d => d.isDirectory()).map(d => d.name.toUpperCase());
+            const dbSyms = new Set(latest.map(s => s.symbol.toUpperCase()));
+            for (const sym of diskSyms) {
+              if (dbSyms.has(sym)) continue;
+              await new Promise(r => setImmediate(r));
+              try { loadLiveFromDisk(sym); warmed++; } catch (_) {}
+            }
+          }
+          log(`✅ liveCache pre-warmed (${warmed} symbols)`);
+        } catch (e) { log(`⚠️ liveCache pre-warm error: ${e.message}`); }
+
+        // Prime the cycle token so first fetch cycle has a valid token
+        advanceCycleToken();
+      }, 2000);
+
+      // ── Startup data check — fully async, non-blocking ────────────────────────
+      // All heavy operations run one symbol per setImmediate tick so HTTP/WS
+      // requests are never starved. Starts 8 s after listen so the server is
+      // fully live before any disk work begins.
       setTimeout(async () => {
         console.log('\n🔍 Startup check: scanning for missing data files...');
 
-        // 1. Strategy 4.0 / Bromos — always force-regenerate with latest formula
-        try {
-          if (regenerateAllStrategy40) {
-            console.log('  📊 Strategy40/Bromos: regenerating all with correct formula...');
-            regenerateAllStrategy40();
-          }
-        } catch (e) { console.error('  ❌ Strategy40 regeneration error:', e.message); }
+        const yieldLoop = () => new Promise(r => setImmediate(r));
 
-        // 1b. Re-apply gap correction to ALL historical dates with fixed if/else if logic
-        try {
-          if (generateBromosOpenForAllDates) {
-            console.log('  📊 Bromos: re-applying gap correction to all historical dates...');
-            generateBromosOpenForAllDates();
-          }
-        } catch (e) { console.error('  ❌ Bromos gap correction error:', e.message); }
-
-        // 1c. Live gap-open correction for _bromos_latest.json (today's header)
+        // Phase 1: Bromos gap-open check (fast — 1 file per symbol)
         try {
           if (updateBromosForGapOpen) {
-            const instruments = CONFIG?.INSTRUMENTS || [];
-            const syms = instruments.map(k => createSafeFolderName(getInstrumentName(k)));
+            const { PATHS: P2 } = require('./config/paths');
+            const symFolders2 = fs.existsSync(P2.MARKET)
+              ? fs.readdirSync(P2.MARKET, { withFileTypes: true })
+                  .filter(d => d.isDirectory() && /^[A-Z0-9_]+$/.test(d.name))
+                  .map(d => d.name)
+              : [];
             console.log('  📊 Bromos gap-open check on startup...');
-            for (const sym of syms) {
+            for (const sym of symFolders2) {
+              await yieldLoop();
               try { updateBromosForGapOpen(sym); } catch (_) {}
             }
+            console.log('  ✅ Bromos gap-open done');
           }
-        } catch (e) { console.error('  ❌ Bromos gap-open startup error:', e.message); }
+        } catch (e) { console.error('  ❌ Bromos gap-open error:', e.message); }
 
-        // 2. Chart data, MCTR, OI charts (chain.js) — generate missing only
-        try {
-          if (autoGenerateMissingChartData) {
-            autoGenerateMissingChartData();
-            console.log('  ✅ Chart / MCTR / OI data generation triggered');
-          }
-        } catch (e) { console.error('  ❌ Chart data generation error:', e.message); }
-
-        // 2. TrainAI — run for any date missing _trainai.json
-        try {
-          if (runTrainAIAll) {
-            console.log('  🤖 TrainAI: analyzing missing dates...');
-            const r = runTrainAIAll(false);          // false = skip already-analyzed dates
-            console.log(`  ✅ TrainAI done — analyzed:${r.analyzed} skipped:${r.skipped} errors:${r.errors}`);
-          }
-        } catch (e) { console.error('  ❌ TrainAI startup error:', e.message); }
+        // NOTE: Chart/MCTR/Strategy40 generation is NOT called here.
+        // Each generateAllChartData() call reads 100+ .gz files synchronously — too heavy
+        // to run at startup even with setImmediate yields. These are generated:
+        //   • On-demand when a user opens a historical date
+        //   • By the live data pipeline as new snapshots arrive
+        //   • Via Admin panel > "Regenerate Strategy40" when manually triggered
+        //
+        // NOTE: TrainAI is NOT called here — it has its own scheduler in trainAI.js
+        // that fires at t=20s on startup, at market close (15:35), and every 1 min
+        // during market hours.
 
         console.log('🔍 Startup check complete.\n');
-      }, 4000);
+      }, 8000); // 8 s delay — server fully live before any disk work starts
     });
     
   } catch (error) {
@@ -3407,5 +3724,9 @@ module.exports = {
   CONFIG,
   getInstrumentName,
   createSafeFolderName,
-  logBuffer
+  logBuffer,
+  LOG_FILE_PATH,
+  log,
+  startFetching,
+  stopFetching
 };

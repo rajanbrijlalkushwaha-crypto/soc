@@ -171,6 +171,7 @@ function UsersTab({ isAdmin }) {
 function SystemTab({ adminToken }) {
   const [status, setStatus]             = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [fetchInterval, setFetchInterval] = useState(10);
   const [tokenVal, setTokenVal]         = useState('');
   const [tokenMsg, setTokenMsg]         = useState('');
   const [token2Val, setToken2Val]       = useState('');
@@ -186,7 +187,10 @@ function SystemTab({ adminToken }) {
   const fetchStatus = useCallback(async () => {
     try {
       const d = await ADMIN_API('/api/admin/status', adminToken);
-      if (d.success) setStatus(d.status);
+      if (d.success) {
+        setStatus(d.status);
+        if (d.status?.refresh_interval_seconds) setFetchInterval(d.status.refresh_interval_seconds);
+      }
     } catch {}
   }, [adminToken]);
 
@@ -237,9 +241,9 @@ function SystemTab({ adminToken }) {
       i.name?.toLowerCase().includes(search.toLowerCase())
     );
 
-  const startFetching = async () => {
+  const startFetching = async (intervalSeconds = fetchInterval) => {
     setActionLoading(true);
-    await ADMIN_API('/api/admin/start', adminToken, { method: 'POST' });
+    await ADMIN_API('/api/admin/start', adminToken, { method: 'POST', body: { interval_seconds: intervalSeconds } });
     await fetchStatus();
     setActionLoading(false);
   };
@@ -291,14 +295,38 @@ function SystemTab({ adminToken }) {
             {status?.total_updates !== undefined && <span>Total updates: <b>{status.total_updates}</b></span>}
             {status?.current_expiry && <span>Expiry: <b>{status.current_expiry}</b></span>}
           </div>
+          {/* Interval selector */}
+          <div style={{ display:'flex', alignItems:'center', gap:'6px', margin:'8px 0 4px' }}>
+            <label style={{ fontSize:'12px', color:'#666', whiteSpace:'nowrap' }}>Interval:</label>
+            <select
+              value={fetchInterval}
+              onChange={e => setFetchInterval(Number(e.target.value))}
+              disabled={actionLoading}
+              style={{ padding:'3px 7px', borderRadius:'4px', border:'1px solid #ccc', fontSize:'13px', background:'#fff' }}
+            >
+              {[1,2,3,5,10,15].map(s => <option key={s} value={s}>{s}s</option>)}
+            </select>
+            <span style={{ fontSize:'11px', color:'#999' }}>fetch every {fetchInterval}s</span>
+          </div>
           <div className="admp-sys-btns">
             <button
               className={`admp-btn ${running ? 'admp-btn-warn' : 'admp-btn-success'}`}
-              onClick={running ? stopFetching : startFetching}
+              onClick={running ? stopFetching : () => startFetching(fetchInterval)}
               disabled={actionLoading}
             >
               {actionLoading ? '...' : running ? '⏹ Stop Fetching' : '▶ Start Fetching'}
             </button>
+            {running && (
+              <button
+                className="admp-btn admp-btn-primary"
+                style={{ fontSize:'12px', padding:'4px 10px' }}
+                onClick={() => startFetching(fetchInterval)}
+                disabled={actionLoading}
+                title="Restart with new interval"
+              >
+                ↺ Apply
+              </button>
+            )}
           </div>
         </div>
 
@@ -461,8 +489,18 @@ function UpstoxAppsPanel({ adminToken }) {
     if (secret) body.api_secret = secret;
     try {
       const d = await ADMIN_API(`/api/admin/upstox-apps/${app.id}`, adminToken, { method: 'PUT', body });
-      if (d.success) { setEditSecrets(s => { const n={...s}; delete n[app.id]; return n; }); load(); }
-      setMsg(d.message || (d.success ? 'Saved!' : 'Failed'));
+      if (d.success) { setEditSecrets(s => { const n={...s}; delete n[app.id]; return n; }); }
+      const manualToken = (tokenInputs[app.id] || '').trim();
+      if (manualToken) {
+        const td = await ADMIN_API(`/api/admin/upstox-apps/${app.id}/token`, adminToken, {
+          method: 'PATCH', body: { access_token: manualToken },
+        });
+        if (td.success) { setTokenInputs(t => { const n={...t}; delete n[app.id]; return n; }); }
+        setMsg(td.message || (td.success ? 'Saved!' : 'Failed'));
+      } else {
+        setMsg(d.message || (d.success ? 'Saved!' : 'Failed'));
+      }
+      if (d.success) load();
     } catch { setMsg('Error'); }
     finally { setSaving(null); }
   };
@@ -1406,8 +1444,482 @@ function IndicatorsTab() {
   );
 }
 
+// ── Subscriptions Tab ────────────────────────────────────────────────────────
+function SubscriptionsTab() {
+  const [subs, setSubs]       = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch]   = useState('');
+  const [filter, setFilter]   = useState('active');
+
+  const loadSubs = useCallback(() => {
+    setLoading(true);
+    API('/api/subscription/admin/subscriptions')
+      .then(d => { if (d.success) setSubs(d.subscriptions || []); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { loadSubs(); }, [loadSubs]);
+
+  const fmt    = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  const fmtAmt = (p) => p != null ? `₹${(p / 100).toLocaleString('en-IN')}` : '—';
+
+  const filtered = subs.filter(s => {
+    if (filter !== 'all' && s.status !== filter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return s.userName?.toLowerCase().includes(q) ||
+             s.userEmail?.toLowerCase().includes(q) ||
+             (s.userMobile || '').includes(search) ||
+             s.planName?.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const STATUS_PILL = { active: { bg: '#e8f5e9', color: '#1b5e20' }, expired: { bg: '#f5f5f5', color: '#666' }, cancelled: { bg: '#fbe9e7', color: '#b71c1c' }, pending: { bg: '#fff3e0', color: '#e65100' } };
+
+  return (
+    <div className="admp-tab">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+        <div className="admp-section-title">💳 Payments</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {['active', 'expired', 'all'].map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`admp-btn admp-btn-sm ${filter === f ? 'admp-btn-primary' : 'admp-btn-outline'}`}
+              style={{ textTransform: 'capitalize' }}>{f}</button>
+          ))}
+          <input className="admp-input" style={{ minWidth: 200, flex: 'unset' }} placeholder="Search name / email / mobile / plan…"
+            value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+      </div>
+      {loading ? <div className="admp-empty">Loading…</div> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="admp-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Mobile</th>
+                <th>Plan</th>
+                <th>Amount</th>
+                <th>Valid From</th>
+                <th>Valid To</th>
+                <th>Coupon</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && <tr><td colSpan={9} className="admp-empty">No records</td></tr>}
+              {filtered.map(s => {
+                const pill = STATUS_PILL[s.status] || STATUS_PILL.expired;
+                return (
+                  <tr key={s._id}>
+                    <td style={{ fontWeight: 600 }}>{s.userName || '—'}</td>
+                    <td style={{ fontSize: 12 }}>{s.userEmail || '—'}</td>
+                    <td style={{ fontSize: 12 }}>{s.userMobile || '—'}</td>
+                    <td style={{ fontWeight: 700 }}>{s.planName}</td>
+                    <td style={{ fontWeight: 700, color: '#1b5e20' }}>{fmtAmt(s.amountPaid)}</td>
+                    <td style={{ fontSize: 12 }}>{fmt(s.startDate)}</td>
+                    <td style={{ fontSize: 12 }}>{fmt(s.endDate)}</td>
+                    <td style={{ fontSize: 11, color: '#888', fontFamily: 'monospace' }}>{s.couponCode || '—'}</td>
+                    <td><span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 10, fontSize: 11, fontWeight: 800, background: pill.bg, color: pill.color }}>{s.status}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Coupons Tab ───────────────────────────────────────────────────────────────
+function CouponsTab() {
+  const [coupons, setCoupons] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg]         = useState('');
+  const [form, setForm]       = useState({ code: '', type: 'flat', value: '', maxUses: 100, description: '', validFrom: '', validUntil: '' });
+  const [showForm, setShowForm] = useState(false);
+
+  const loadCoupons = useCallback(() => {
+    setLoading(true);
+    API('/api/subscription/admin/coupons')
+      .then(d => { if (d.success) setCoupons(d.coupons || []); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { loadCoupons(); }, [loadCoupons]);
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    if (!form.code.trim() || !form.value) return setMsg('Code and value are required');
+    const d = await API('/api/subscription/admin/coupons', {
+      method: 'POST',
+      body: { ...form, code: form.code.trim().toUpperCase(), value: parseFloat(form.value), maxUses: parseInt(form.maxUses) || 100, validFrom: form.validFrom || undefined, validUntil: form.validUntil || undefined },
+    });
+    setMsg(d.success ? '✅ Coupon created!' : `Error: ${d.error || 'Failed'}`);
+    if (d.success) { loadCoupons(); setForm({ code: '', type: 'flat', value: '', maxUses: 100, description: '', validFrom: '', validUntil: '' }); setShowForm(false); }
+    setTimeout(() => setMsg(''), 4000);
+  };
+
+  const toggleActive = async (id, current) => {
+    const d = await API(`/api/subscription/admin/coupons/${id}`, { method: 'PATCH', body: { isActive: !current } });
+    setMsg(d.success ? `✅ ${!current ? 'Enabled' : 'Disabled'}` : `Error: ${d.error}`);
+    if (d.success) loadCoupons();
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  const deleteCoupon = async (id, code) => {
+    if (!window.confirm(`Delete coupon "${code}"?`)) return;
+    const d = await API(`/api/subscription/admin/coupons/${id}`, { method: 'DELETE' });
+    setMsg(d.success ? '✅ Deleted' : `Error: ${d.error}`);
+    if (d.success) loadCoupons();
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  const fmt = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'No limit';
+
+  return (
+    <div className="admp-tab">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div className="admp-section-title">🏷️ Coupon Codes</div>
+        <button className="admp-btn admp-btn-primary" onClick={() => setShowForm(s => !s)}>{showForm ? '✕ Cancel' : '+ New Coupon'}</button>
+      </div>
+
+      {msg && <div className={`admp-msg ${msg.startsWith('✅') ? 'success' : 'error'}`} style={{ marginBottom: 14 }}>{msg}</div>}
+
+      {showForm && (
+        <div className="admp-card" style={{ marginBottom: 20 }}>
+          <div style={{ fontWeight: 800, fontSize: 13, color: '#1a1a2e', marginBottom: 14 }}>Create New Coupon</div>
+          <form onSubmit={handleCreate}>
+            <div className="admp-form-grid" style={{ marginBottom: 12 }}>
+              <div>
+                <label className="admp-label">Code *</label>
+                <input className="admp-input" placeholder="SAVE50" value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))} />
+              </div>
+              <div>
+                <label className="admp-label">Type</label>
+                <select className="admp-input" value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
+                  <option value="flat">Flat (₹ off)</option>
+                  <option value="percent">Percent (% off)</option>
+                </select>
+              </div>
+              <div>
+                <label className="admp-label">Value * {form.type === 'flat' ? '(₹)' : '(%)'}</label>
+                <input className="admp-input" type="number" min="1" placeholder={form.type === 'flat' ? '100' : '10'} value={form.value} onChange={e => setForm(f => ({ ...f, value: e.target.value }))} />
+              </div>
+              <div>
+                <label className="admp-label">Max Uses</label>
+                <input className="admp-input" type="number" min="1" value={form.maxUses} onChange={e => setForm(f => ({ ...f, maxUses: e.target.value }))} />
+              </div>
+              <div>
+                <label className="admp-label">Valid From</label>
+                <input className="admp-input" type="date" value={form.validFrom} onChange={e => setForm(f => ({ ...f, validFrom: e.target.value }))} />
+              </div>
+              <div>
+                <label className="admp-label">Valid Until</label>
+                <input className="admp-input" type="date" value={form.validUntil} onChange={e => setForm(f => ({ ...f, validUntil: e.target.value }))} />
+              </div>
+              <div className="admp-form-grid-full">
+                <label className="admp-label">Description (internal)</label>
+                <input className="admp-input" placeholder="e.g. Launch offer for Oct 2026" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+              </div>
+            </div>
+            <button className="admp-btn admp-btn-primary" type="submit">Create Coupon</button>
+          </form>
+        </div>
+      )}
+
+      {loading ? <div className="admp-empty">Loading…</div> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="admp-table">
+            <thead><tr><th>Code</th><th>Type</th><th>Value</th><th>Used / Max</th><th>Valid Until</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              {coupons.length === 0 && <tr><td colSpan={7} className="admp-empty">No coupons yet</td></tr>}
+              {coupons.map(c => (
+                <tr key={c._id}>
+                  <td style={{ fontFamily: 'monospace', fontWeight: 800, letterSpacing: 1, color: '#1a1a2e' }}>{c.code}</td>
+                  <td style={{ textTransform: 'capitalize' }}>{c.type}</td>
+                  <td style={{ fontWeight: 700 }}>{c.type === 'flat' ? `₹${c.value}` : `${c.value}%`}</td>
+                  <td>{c.usedCount} / {c.maxUses}</td>
+                  <td style={{ fontSize: 12 }}>{fmt(c.validUntil)}</td>
+                  <td>
+                    <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 10, fontSize: 11, fontWeight: 800,
+                      background: c.isActive ? '#e8f5e9' : '#f5f5f5', color: c.isActive ? '#1b5e20' : '#888' }}>
+                      {c.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td>
+                    <button className="admp-btn admp-btn-sm admp-btn-outline" style={{ marginRight: 6 }} onClick={() => toggleActive(c._id, c.isActive)}>
+                      {c.isActive ? 'Disable' : 'Enable'}
+                    </button>
+                    <button className="admp-btn admp-btn-sm admp-btn-danger" onClick={() => deleteCoupon(c._id, c.code)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Plans Tab ─────────────────────────────────────────────────────────────────
+function PlansTab() {
+  const [plans, setPlans]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [msg, setMsg]           = useState('');
+  const [editing, setEditing]   = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [showAdd, setShowAdd]   = useState(false);
+  const [addForm, setAddForm]   = useState({ name: '', price: '', communityPrice: '', durationDays: '', badge: '', category: 'Regular', description: '' });
+
+  const loadPlans = useCallback(() => {
+    setLoading(true);
+    API('/api/subscription/admin/plans')
+      .then(d => { if (d.success) setPlans(d.plans || []); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { loadPlans(); }, [loadPlans]);
+
+  const startEdit = (plan) => {
+    setEditing(plan._id);
+    setEditForm({
+      name: plan.name,
+      price: (plan.price / 100).toFixed(0),
+      communityPrice: plan.communityPrice ? (plan.communityPrice / 100).toFixed(0) : '',
+      durationDays: plan.durationDays,
+      badge: plan.badge || '',
+      category: plan.category || 'Regular',
+      isActive: plan.isActive !== false,
+    });
+  };
+
+  const saveEdit = async (id) => {
+    const body = {
+      name: editForm.name,
+      price: parseFloat(editForm.price),
+      durationDays: parseInt(editForm.durationDays),
+      badge: editForm.badge,
+      isActive: editForm.isActive,
+      category: editForm.category || 'Regular',
+    };
+    if (editForm.communityPrice) body.communityPrice = parseFloat(editForm.communityPrice);
+    else body.communityPrice = null;
+    const d = await API(`/api/subscription/admin/plans/${id}`, { method: 'PATCH', body });
+    setMsg(d.success ? '✅ Plan updated!' : `Error: ${d.error || 'Failed'}`);
+    if (d.success) { setEditing(null); loadPlans(); }
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  const addPlan = async (e) => {
+    e.preventDefault();
+    if (!addForm.name || !addForm.price || !addForm.durationDays) return setMsg('Name, price and duration are required');
+    const body = {
+      name: addForm.name,
+      price: parseFloat(addForm.price),
+      durationDays: parseInt(addForm.durationDays),
+      badge: addForm.badge,
+      description: addForm.description,
+      category: addForm.category || 'Regular',
+    };
+    if (addForm.communityPrice) body.communityPrice = parseFloat(addForm.communityPrice);
+    const d = await API('/api/subscription/admin/plans', { method: 'POST', body });
+    setMsg(d.success ? '✅ Plan created!' : `Error: ${d.error || 'Failed'}`);
+    if (d.success) { setShowAdd(false); setAddForm({ name: '', price: '', communityPrice: '', durationDays: '', badge: '', category: 'Regular', description: '' }); loadPlans(); }
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  const fmtAmt = (p) => `₹${(p / 100).toLocaleString('en-IN')}`;
+
+  return (
+    <div className="admp-tab">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div className="admp-section-title">📋 Subscription Plans</div>
+        <button className="admp-btn admp-btn-primary" onClick={() => setShowAdd(s => !s)}>{showAdd ? '✕ Cancel' : '+ New Plan'}</button>
+      </div>
+
+      {msg && <div className={`admp-msg ${msg.startsWith('✅') ? 'success' : 'error'}`} style={{ marginBottom: 14 }}>{msg}</div>}
+
+      {showAdd && (
+        <div className="admp-card" style={{ marginBottom: 20 }}>
+          <div style={{ fontWeight: 800, fontSize: 13, color: '#1a1a2e', marginBottom: 14 }}>New Plan</div>
+          <form onSubmit={addPlan}>
+            <div className="admp-form-grid" style={{ marginBottom: 12 }}>
+              <div>
+                <label className="admp-label">Plan Name *</label>
+                <input className="admp-input" placeholder="Monthly" value={addForm.name} onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))} />
+              </div>
+              <div>
+                <label className="admp-label">Category *</label>
+                <select className="admp-input" value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))}>
+                  <option value="Regular">Regular</option>
+                  <option value="Advance">Advance</option>
+                  <option value="Courses">Courses</option>
+                </select>
+              </div>
+              <div>
+                <label className="admp-label">Price (₹) *</label>
+                <input className="admp-input" type="number" min="1" placeholder="499" value={addForm.price} onChange={e => setAddForm(f => ({ ...f, price: e.target.value }))} />
+              </div>
+              <div>
+                <label className="admp-label">Community Price (₹)</label>
+                <input className="admp-input" type="number" min="1" placeholder="399 (optional)" value={addForm.communityPrice} onChange={e => setAddForm(f => ({ ...f, communityPrice: e.target.value }))} />
+              </div>
+              <div>
+                <label className="admp-label">Duration (days) *</label>
+                <input className="admp-input" type="number" min="1" placeholder="30" value={addForm.durationDays} onChange={e => setAddForm(f => ({ ...f, durationDays: e.target.value }))} />
+              </div>
+              <div>
+                <label className="admp-label">Badge (optional)</label>
+                <input className="admp-input" placeholder="Most Popular" value={addForm.badge} onChange={e => setAddForm(f => ({ ...f, badge: e.target.value }))} />
+              </div>
+              <div className="admp-form-grid-full">
+                <label className="admp-label">Description</label>
+                <input className="admp-input" placeholder="Full access for 1 month" value={addForm.description} onChange={e => setAddForm(f => ({ ...f, description: e.target.value }))} />
+              </div>
+            </div>
+            <button className="admp-btn admp-btn-primary" type="submit">Create Plan</button>
+          </form>
+        </div>
+      )}
+
+      {loading ? <div className="admp-empty">Loading…</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {plans.length === 0 && <div className="admp-empty">No plans found</div>}
+          {plans.map(plan => (
+            <div key={plan._id} className="admp-card">
+              {editing === plan._id ? (
+                <>
+                  <div style={{ fontWeight: 800, fontSize: 13, color: '#1a1a2e', marginBottom: 12 }}>Editing: {plan.name}</div>
+                  <div className="admp-form-grid" style={{ marginBottom: 12 }}>
+                    <div><label className="admp-label">Name</label><input className="admp-input" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} /></div>
+                    <div>
+                      <label className="admp-label">Category</label>
+                      <select className="admp-input" value={editForm.category || 'Regular'} onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))}>
+                        <option value="Regular">Regular</option>
+                        <option value="Advance">Advance</option>
+                        <option value="Courses">Courses</option>
+                      </select>
+                    </div>
+                    <div><label className="admp-label">Price (₹)</label><input className="admp-input" type="number" value={editForm.price} onChange={e => setEditForm(f => ({ ...f, price: e.target.value }))} /></div>
+                    <div><label className="admp-label">Community Price (₹)</label><input className="admp-input" type="number" placeholder="Leave blank to remove" value={editForm.communityPrice || ''} onChange={e => setEditForm(f => ({ ...f, communityPrice: e.target.value }))} /></div>
+                    <div><label className="admp-label">Duration (days)</label><input className="admp-input" type="number" value={editForm.durationDays} onChange={e => setEditForm(f => ({ ...f, durationDays: e.target.value }))} /></div>
+                    <div><label className="admp-label">Badge</label><input className="admp-input" value={editForm.badge} onChange={e => setEditForm(f => ({ ...f, badge: e.target.value }))} /></div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#444', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={editForm.isActive} onChange={e => setEditForm(f => ({ ...f, isActive: e.target.checked }))} />
+                      Active (visible to users)
+                    </label>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                      <button className="admp-btn admp-btn-primary admp-btn-sm" onClick={() => saveEdit(plan._id)}>Save Changes</button>
+                      <button className="admp-btn admp-btn-sm admp-btn-outline" onClick={() => setEditing(null)}>Cancel</button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                      <span style={{ fontSize: 15, fontWeight: 900, color: '#1a1a2e' }}>{plan.name}</span>
+                      {plan.badge && <span style={{ fontSize: 10, background: '#fff3e0', color: '#e65100', padding: '2px 8px', borderRadius: 10, fontWeight: 800, border: '1px solid #ff6f00' }}>{plan.badge}</span>}
+                      {plan.isActive === false && <span style={{ fontSize: 10, background: '#f5f5f5', color: '#888', padding: '2px 8px', borderRadius: 10, border: '1px solid #ddd' }}>Hidden</span>}
+                    </div>
+                    <div style={{ fontSize: 13, color: '#444' }}>
+                      <strong style={{ color: '#ff6f00' }}>{fmtAmt(plan.price)}</strong>
+                      {plan.communityPrice && <span style={{ color: '#15803d', marginLeft: 6, fontSize: 11 }}>Community: {fmtAmt(plan.communityPrice)}</span>}
+                      <span style={{ color: '#888', marginLeft: 8 }}>{plan.durationDays} days · {fmtAmt(Math.round(plan.price / plan.durationDays))}/day</span>
+                      {plan.category && plan.category !== 'Regular' && <span style={{ marginLeft: 8, fontSize: 10, background: '#e8eaf6', color: '#3949ab', padding: '1px 7px', borderRadius: 8, fontWeight: 700 }}>{plan.category}</span>}
+                    </div>
+                  </div>
+                  <button className="admp-btn admp-btn-sm admp-btn-outline" onClick={() => startEdit(plan)}>Edit</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Token Tab — update Upstox access tokens (no secondary login needed) ──────
+function TokenTab({ adminToken }) {
+  const [token1, setToken1]   = useState('');
+  const [token2, setToken2]   = useState('');
+  const [msg1, setMsg1]       = useState('');
+  const [msg2, setMsg2]       = useState('');
+
+  const submit = async (e, slot) => {
+    e.preventDefault();
+    const val = slot === 1 ? token1 : token2;
+    const setMsg = slot === 1 ? setMsg1 : setMsg2;
+    const endpoint = slot === 1 ? '/api/admin/token' : '/api/admin/token2';
+    setMsg('Saving...');
+    try {
+      const d = adminToken
+        ? await ADMIN_API(endpoint, adminToken, { method: 'POST', body: { access_token: val } })
+        : await API(endpoint, { method: 'POST', body: { access_token: val } });
+      setMsg(d.message || (d.success ? 'Token updated! Fetching restarted.' : d.error || 'Failed'));
+      if (d.success) { slot === 1 ? setToken1('') : setToken2(''); }
+    } catch { setMsg('Network error'); }
+  };
+
+  return (
+    <div className="admp-tab">
+      <div className="admp-tab-header">
+        <span className="admp-tab-title">Access Tokens</span>
+        <span style={{ fontSize: 12, color: '#64748b' }}>Paste your daily Upstox access token here</span>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 600, marginTop: 16 }}>
+        <div className="admp-sys-card">
+          <div className="admp-sys-label">API Key 1 — Primary</div>
+          <form onSubmit={e => submit(e, 1)} className="admp-token-form">
+            <input
+              className="admp-input"
+              placeholder="Paste Upstox access token for slot 1..."
+              value={token1}
+              onChange={e => setToken1(e.target.value)}
+            />
+            <button className="admp-btn admp-btn-primary" type="submit" disabled={!token1}>
+              Update
+            </button>
+          </form>
+          {msg1 && <div className={`admp-msg${msg1.includes('error') || msg1.includes('Failed') ? ' error' : ''}`}>{msg1}</div>}
+        </div>
+
+        <div className="admp-sys-card">
+          <div className="admp-sys-label">
+            API Key 2 — Failover
+            <span style={{ fontSize: 11, fontWeight: 400, opacity: 0.6, marginLeft: 6 }}>auto-switches on rate limit</span>
+          </div>
+          <form onSubmit={e => submit(e, 2)} className="admp-token-form">
+            <input
+              className="admp-input"
+              placeholder="Paste Upstox access token for slot 2..."
+              value={token2}
+              onChange={e => setToken2(e.target.value)}
+            />
+            <button className="admp-btn admp-btn-primary" type="submit" disabled={!token2}>
+              Update
+            </button>
+          </form>
+          {msg2 && <div className={`admp-msg${msg2.includes('error') || msg2.includes('Failed') ? ' error' : ''}`}>{msg2}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main AdminPanel ──────────────────────────────────────────────────────────
-const TABS_ADMIN  = ['Users', 'Team', 'Notifications', 'Indicators', 'AI Train', 'Meet', 'Crypto', 'System', 'Schedule', 'Logs'];
+const TABS_ADMIN  = ['Users', 'Team', 'Notifications', 'Indicators', 'AI Train', 'Meet', 'Subscriptions', 'Coupons', 'Plans', 'Token', 'System', 'Schedule', 'Logs'];
 
 // ── Meet Tab ─────────────────────────────────────────────────────────────────
 function MeetTab() {
@@ -1512,7 +2024,7 @@ export default function AdminPanel() {
   };
 
   // For admin tabs that need system token, show a login prompt if token missing
-  const needsToken = isAdmin && ['Crypto', 'System', 'Schedule', 'Logs'].includes(activeTab);
+  const needsToken = isAdmin && ['System', 'Schedule', 'Logs'].includes(activeTab);
   const isAdminOrMember = isAdmin || userRole === 'member';
 
 
@@ -1552,7 +2064,10 @@ export default function AdminPanel() {
             {tab === 'Indicators' && '🎛️ '}
             {tab === 'AI Train' && '🧠 '}
             {tab === 'Meet' && '📹 '}
-            {tab === 'Crypto' && '🪙 '}
+            {tab === 'Subscriptions' && '💳 '}
+            {tab === 'Coupons' && '🏷️ '}
+            {tab === 'Plans' && '📋 '}
+            {tab === 'Token' && '🔑 '}
             {tab === 'System' && '🖥️ '}
             {tab === 'Schedule' && '🕐 '}
             {tab === 'Logs' && '📋 '}
@@ -1569,6 +2084,10 @@ export default function AdminPanel() {
         {isAdmin && activeTab === 'Indicators' && <IndicatorsTab />}
         {isAdminOrMember && activeTab === 'AI Train' && <AITrainTab />}
         {isAdmin && activeTab === 'Meet' && <MeetTab />}
+        {isAdmin && activeTab === 'Subscriptions' && <SubscriptionsTab />}
+        {isAdmin && activeTab === 'Coupons' && <CouponsTab />}
+        {isAdmin && activeTab === 'Plans' && <PlansTab />}
+        {isAdmin && activeTab === 'Token' && <TokenTab adminToken={adminToken} />}
 
         {isAdmin && needsToken && !adminToken && tokenChecked && (
           <div className="admp-tab">
@@ -1590,7 +2109,6 @@ export default function AdminPanel() {
           </div>
         )}
 
-        {isAdmin && activeTab === 'Crypto'   && adminToken && <CryptoTab   adminToken={adminToken} />}
         {isAdmin && activeTab === 'System'   && adminToken && <SystemTab   adminToken={adminToken} />}
         {isAdmin && activeTab === 'Schedule' && adminToken && <ScheduleTab adminToken={adminToken} />}
         {isAdmin && activeTab === 'Logs'     && adminToken && <LogsTab     adminToken={adminToken} />}
