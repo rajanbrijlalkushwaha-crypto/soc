@@ -6,64 +6,62 @@ const { FIIDII } = require('../db/models/FIIDII');
 
 const UPSTOX_BASE = 'https://api.upstox.com/v2';
 
-// Convert epoch ms → 'YYYY-MM-DD' (IST)
+// Token getter injected from server.js via init()
+let _getToken = () => null;
+
+function init(getTokenFn) {
+  _getToken = getTokenFn;
+}
+
+// epoch ms → 'YYYY-MM-DD' IST
 function tsToDate(ms) {
   const d = new Date(Number(ms) + 5.5 * 3600 * 1000);
   return d.toISOString().split('T')[0];
 }
 
-// Convert raw INR → Crore (rounded to 2dp)
+// Raw INR → Crore (if value > 1,000,000 it's raw INR, else already in Cr)
 function toCr(val) {
   if (!val) return 0;
   const n = Number(val);
-  // If already looks like Crores (< 1,000,000) keep as-is; else divide by 1e7
-  return n > 1_000_000 ? Math.round((n / 1e7) * 100) / 100 : Math.round(n * 100) / 100;
+  return n > 1_000_000
+    ? Math.round((n / 1e7) * 100) / 100
+    : Math.round(n * 100) / 100;
 }
 
-// Fetch 30 days of FII cash market data from Upstox
-async function fetchFII(token, from) {
-  const params = {
-    data_type: 'NSE_EQ|CASH',
-    interval:  '1D',
-  };
-  if (from) params.from = from;
-
+// Single Upstox FII fetch for a given from-date (max 30 trading days)
+async function fetchFIIPage(token, from) {
   const resp = await axios.get(`${UPSTOX_BASE}/market/fii`, {
-    params,
+    params: { data_type: 'NSE_EQ|CASH', interval: '1D', from },
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    timeout: 15000,
   });
-  return resp.data?.data?.['NSE_EQ|CASH'] || resp.data?.data?.['NSE_EQ_CASH'] || [];
+  const data = resp.data?.data || {};
+  // Upstox may return the key with or without URL-encoding the pipe
+  return data['NSE_EQ|CASH'] || data['NSE_EQ%7CCASH'] || Object.values(data)[0] || [];
 }
 
-// Fetch 30 days of DII cash market data from Upstox
-async function fetchDII(token, from) {
-  const params = {
-    data_type: 'NSE_EQ|CASH',
-    interval:  '1D',
-  };
-  if (from) params.from = from;
-
+// Single Upstox DII fetch for a given from-date
+async function fetchDIIPage(token, from) {
   const resp = await axios.get(`${UPSTOX_BASE}/market/dii`, {
-    params,
+    params: { data_type: 'NSE_EQ|CASH', interval: '1D', from },
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    timeout: 15000,
   });
-  return resp.data?.data?.['NSE_EQ|CASH'] || resp.data?.data?.['NSE_EQ_CASH'] || [];
+  const data = resp.data?.data || {};
+  return data['NSE_EQ|CASH'] || data['NSE_EQ%7CCASH'] || Object.values(data)[0] || [];
 }
 
-// Fetch both FII + DII, merge by date, upsert into socuptick DB
-async function fetchAndSave(token) {
-  // 30 trading days back from today
-  const from = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().split('T')[0];
+// Step back one trading day (skip Sat/Sun)
+function prevTradingDay(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  do { d.setUTCDate(d.getUTCDate() - 1); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  return d.toISOString().split('T')[0];
+}
 
-  const [fiiRows, diiRows] = await Promise.all([
-    fetchFII(token, from),
-    fetchDII(token, from),
-  ]);
-
-  if (!fiiRows.length && !diiRows.length) throw new Error('Empty FII/DII response from Upstox');
-
-  // Build date-keyed map from FII
+// Merge FII + DII arrays (both keyed by time_stamp) into DB upsert ops
+function buildOps(fiiRows, diiRows) {
   const byDate = {};
+
   for (const r of fiiRows) {
     const date = tsToDate(r.time_stamp);
     if (!byDate[date]) byDate[date] = { date };
@@ -72,7 +70,6 @@ async function fetchAndSave(token) {
     byDate[date].fii_net  = Math.round((toCr(r.buy_amount) - toCr(r.sell_amount)) * 100) / 100;
   }
 
-  // Merge DII
   for (const r of diiRows) {
     const date = tsToDate(r.time_stamp);
     if (!byDate[date]) byDate[date] = { date };
@@ -81,34 +78,80 @@ async function fetchAndSave(token) {
     byDate[date].dii_net  = Math.round((toCr(r.buy_amount) - toCr(r.sell_amount)) * 100) / 100;
   }
 
-  const records = Object.values(byDate).filter(r => r.date);
-  if (!records.length) throw new Error('No records after merge');
+  return Object.values(byDate)
+    .filter(r => r.date)
+    .map(r => ({
+      updateOne: {
+        filter: { date: r.date },
+        update: { $set: { ...r, fetchedAt: new Date() } },
+        upsert: true,
+      },
+    }));
+}
 
-  const ops = records.map(r => ({
-    updateOne: {
-      filter: { date: r.date },
-      update: { $set: { ...r, fetchedAt: new Date() } },
-      upsert: true,
-    },
-  }));
-
-  await FIIDII.bulkWrite(ops);
-  console.log(`[FII/DII] Saved ${ops.length} records to socuptick DB`);
+// Fetch latest 30 trading days (API 'from' = end-date, returns rows going backward)
+async function fetchAndSave(token) {
+  const today = new Date().toISOString().split('T')[0];
+  const [fiiRows, diiRows] = await Promise.all([
+    fetchFIIPage(token, today),
+    fetchDIIPage(token, today),
+  ]);
+  if (!fiiRows.length && !diiRows.length) throw new Error('Empty response — check token');
+  const ops = buildOps(fiiRows, diiRows);
+  if (ops.length) await FIIDII.bulkWrite(ops);
+  console.log(`[FII/DII] Saved ${ops.length} records`);
   return ops.length;
 }
 
-// GET /api/fiidii — last 30 days from DB; auto-fetch if empty
+// Download ALL data back to startDate — paginate backward (API returns ≤30 rows per 'from'/end-date)
+async function downloadAll(token, startDate) {
+  let endDate    = new Date().toISOString().split('T')[0];
+  let totalSaved = 0;
+  let page       = 0;
+  const MAX_PAGES = 20;
+
+  while (page < MAX_PAGES) {
+    console.log(`[FII/DII] Fetching page ${page + 1} ending at ${endDate}...`);
+    const [fiiRows, diiRows] = await Promise.all([
+      fetchFIIPage(token, endDate).catch(() => []),
+      fetchDIIPage(token, endDate).catch(() => []),
+    ]);
+
+    if (!fiiRows.length && !diiRows.length) break;
+
+    const ops = buildOps(fiiRows, diiRows);
+    if (ops.length) {
+      await FIIDII.bulkWrite(ops);
+      totalSaved += ops.length;
+    }
+
+    // Earliest date in this page — go back one trading day for next page
+    const allDates    = [...fiiRows, ...diiRows].map(r => tsToDate(r.time_stamp)).sort();
+    const earliestDate = allDates[0];
+    if (!earliestDate || earliestDate <= startDate) break;
+
+    endDate = prevTradingDay(earliestDate);
+    page++;
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  console.log(`[FII/DII] Download complete — ${totalSaved} total records saved`);
+  return totalSaved;
+}
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+// GET /api/fiidii — return all saved records (up to 100, sorted newest first)
 router.get('/', async (req, res) => {
   try {
-    const rows = await FIIDII.find().sort({ date: -1 }).limit(30).lean();
+    const rows = await FIIDII.find().sort({ date: -1 }).limit(100).lean();
     if (rows.length) return res.json({ success: true, data: rows });
 
-    // DB empty — try live fetch
-    const token = req.app?.locals?.upstoxToken;
-    if (!token) return res.json({ success: true, data: [] });
-
+    // DB empty — auto-fetch
+    const token = _getToken();
+    if (!token) return res.json({ success: true, data: [], message: 'No token — restart backend' });
     await fetchAndSave(token);
-    const fresh = await FIIDII.find().sort({ date: -1 }).limit(30).lean();
+    const fresh = await FIIDII.find().sort({ date: -1 }).limit(100).lean();
     res.json({ success: true, data: fresh });
   } catch (err) {
     console.error('[FII/DII] GET error:', err.message);
@@ -116,11 +159,11 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/fiidii/refresh — manual trigger
+// POST /api/fiidii/refresh — fetch last 30 days
 router.post('/refresh', async (req, res) => {
   try {
-    const token = req.app?.locals?.upstoxToken;
-    if (!token) return res.status(400).json({ success: false, error: 'No Upstox token available' });
+    const token = _getToken();
+    if (!token) return res.status(400).json({ success: false, error: 'No Upstox token' });
     const count = await fetchAndSave(token);
     res.json({ success: true, saved: count });
   } catch (err) {
@@ -129,32 +172,48 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
+// POST /api/fiidii/download-all — bulk download from April 1 2026
+router.post('/download-all', async (req, res) => {
+  try {
+    const token = _getToken();
+    if (!token) return res.status(400).json({ success: false, error: 'No Upstox token' });
+    const startDate = req.body?.from || '2026-04-01';
+    // Fire in background — respond immediately
+    res.json({ success: true, message: `Downloading all data from ${startDate}...` });
+    downloadAll(token, startDate)
+      .then(n => console.log(`[FII/DII] download-all done: ${n} records`))
+      .catch(e => console.error('[FII/DII] download-all error:', e.message));
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── Daily 4 PM IST scheduler ──────────────────────────────────────────────────
 let _lastFetchDate = null;
 
-function scheduleDailyFetch(getTokenFn) {
+function scheduleDailyFetch() {
   setInterval(() => {
     const ist = new Date(Date.now() + 5.5 * 3600 * 1000);
     const hh  = ist.getUTCHours();
     const mm  = ist.getUTCMinutes();
     const dd  = ist.toISOString().split('T')[0];
-    const dow = ist.getUTCDay(); // 0=Sun, 6=Sat
+    const dow = ist.getUTCDay();
 
-    if (dow === 0 || dow === 6) return;   // skip weekends
-    if (hh !== 16 || mm > 2) return;      // fire at 16:00–16:02 IST
-    if (_lastFetchDate === dd) return;     // already ran today
+    if (dow === 0 || dow === 6) return;
+    if (hh !== 16 || mm > 2) return;
+    if (_lastFetchDate === dd) return;
 
     _lastFetchDate = dd;
-    const token = getTokenFn();
+    const token = _getToken();
     if (!token) return;
 
-    console.log('[FII/DII] 4 PM IST trigger — fetching...');
+    console.log('[FII/DII] 4 PM IST — auto-fetching...');
     fetchAndSave(token)
-      .then(n => console.log(`[FII/DII] Scheduled save: ${n} records`))
-      .catch(e => console.error('[FII/DII] Scheduled fetch error:', e.message));
+      .then(n => console.log(`[FII/DII] Saved ${n} records`))
+      .catch(e => console.error('[FII/DII] Schedule error:', e.message));
   }, 60_000);
 }
 
 module.exports = router;
+module.exports.init = init;
 module.exports.scheduleDailyFetch = scheduleDailyFetch;
-module.exports.fetchAndSave = fetchAndSave;
