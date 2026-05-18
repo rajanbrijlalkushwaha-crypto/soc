@@ -188,8 +188,10 @@ router.post('/download-all', async (req, res) => {
   }
 });
 
-// ── Daily 4 PM IST scheduler ──────────────────────────────────────────────────
-let _lastFetchDate = null;
+// ── Daily scheduler: 4:00 PM + 4:30 PM IST (Mon–Fri) ────────────────────────
+// Upstox publishes FII/DII data after market close (3:30 PM IST).
+// We fetch at 4:00 PM and again at 4:30 PM to catch any delayed publication.
+const _fetched = new Set(); // tracks "YYYY-MM-DD_HH:MM" to avoid double-fire
 
 function scheduleDailyFetch() {
   setInterval(() => {
@@ -199,15 +201,22 @@ function scheduleDailyFetch() {
     const dd  = ist.toISOString().split('T')[0];
     const dow = ist.getUTCDay();
 
-    if (dow === 0 || dow === 6) return;
-    if (hh !== 16 || mm > 2) return;
-    if (_lastFetchDate === dd) return;
+    if (dow === 0 || dow === 6) return; // skip weekends
 
-    _lastFetchDate = dd;
+    // Fire at 16:00–16:02 and 16:30–16:32 IST
+    const is4pm   = hh === 16 && mm <= 2;
+    const is430pm = hh === 16 && mm >= 30 && mm <= 32;
+    if (!is4pm && !is430pm) return;
+
+    const slot = `${dd}_${is4pm ? '16:00' : '16:30'}`;
+    if (_fetched.has(slot)) return;
+    _fetched.add(slot);
+
     const token = _getToken();
     if (!token) return;
 
-    console.log('[FII/DII] 4 PM IST — auto-fetching...');
+    const label = is4pm ? '4:00 PM' : '4:30 PM';
+    console.log(`[FII/DII] ${label} IST — auto-fetching...`);
     fetchAndSave(token)
       .then(n => console.log(`[FII/DII] Saved ${n} records`))
       .catch(e => console.error('[FII/DII] Schedule error:', e.message));
