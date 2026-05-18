@@ -180,7 +180,18 @@ async function fetchFrom1mAPI({ instrKey, fromDate, toDate, token }) {
 // Runs once on startup (after token is confirmed valid).
 async function backfillUpstoxCandles(getToken) {
   const token = getToken();
-  if (!token) return;
+  if (!token) { console.log('[upstox] Backfill skipped — no token'); return; }
+
+  // Verify token is valid before burning 10s timeouts per instrument
+  try {
+    const axios = require('axios');
+    await axios.get('https://api.upstox.com/v2/user/profile', {
+      headers: { Authorization: `Bearer ${token}` }, timeout: 5000,
+    });
+  } catch (e) {
+    console.log('[upstox] Backfill skipped — token invalid/expired:', e.response?.status || e.message);
+    return;
+  }
 
   console.log('[upstox] Starting historical candle backfill...');
 
