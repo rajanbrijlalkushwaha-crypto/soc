@@ -105,7 +105,6 @@ const initialState = {
   aiStockActive: false,
   joinMeetActive: false,
   cryptoPageActive: false,
-  liveOCActive: false,
   heatmapActive: false,
   fiiDiiActive: false,
 
@@ -309,19 +308,15 @@ function appReducer(state, action) {
         : { ...state, joinMeetActive: false };
     case 'SET_CRYPTO_PAGE':
       return action.payload
-        ? { ...state, cryptoPageActive: true, liveOCActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        ? { ...state, cryptoPageActive: true, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
         : { ...state, cryptoPageActive: false };
-    case 'SET_LIVE_OC':
-      return action.payload
-        ? { ...state, liveOCActive: true, heatmapActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
-        : { ...state, liveOCActive: false };
     case 'SET_HEATMAP':
       return action.payload
-        ? { ...state, heatmapActive: true, fiiDiiActive: false, liveOCActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        ? { ...state, heatmapActive: true, fiiDiiActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
         : { ...state, heatmapActive: false };
     case 'SET_FIIDII':
       return action.payload
-        ? { ...state, fiiDiiActive: true, heatmapActive: false, liveOCActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
+        ? { ...state, fiiDiiActive: true, heatmapActive: false, cryptoPageActive: false, joinMeetActive: false, aiStockActive: false, aiTrainActive: false, teamPageActive: false, journalActive: false, profileActive: false, adminPanelActive: false, subscriptionActive: false, holidayListActive: false, supportActive: false, aiPageActive: false, indexPageActive: false }
         : { ...state, fiiDiiActive: false };
     case 'SET_NOTIF_PANEL':
       return { ...state, notifPanelOpen: action.payload };

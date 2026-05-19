@@ -389,8 +389,8 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,        // always true — frontend is always on HTTPS (Vercel)
+    sameSite: 'none',   // required for cross-origin (Vercel → backend)
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   },
   rolling: false,
@@ -456,8 +456,9 @@ app.use('/api/heatmap', require('./api/heatmap'));
 
 // FII / DII activity — daily data, saved in FIIDII collection
 const fiidiiRouter = require('./api/fiidii');
+fiidiiRouter.init(getActiveToken);       // wire token getter before any request hits
 app.use('/api/fiidii', fiidiiRouter);
-fiidiiRouter.scheduleDailyFetch(getActiveToken);
+fiidiiRouter.scheduleDailyFetch();       // start 4 PM IST cron
 
 // Power AI Stock filter
 require("./api/powerAiStock")(app);
@@ -1430,23 +1431,7 @@ async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKe
         try { require('./api/upstoxFeed').processTick(safeInstrumentName, spotPrice); } catch (_) {}
       }
 
-      // Register option instrument keys with UpstoxWS so it subscribes to them
-      try {
-        const upstoxWs = require('./ws/upstoxWs');
-        const futSym = getFuturesSymbol(instrumentKey);
-        const fKey   = futSym ? (_futuresKeyCache[futSym]?.instrument_key || null) : null;
-        const optKeys = (chainData.data || []).flatMap(row => [
-          row.call_options?.instrument_key,
-          row.put_options?.instrument_key,
-        ]).filter(Boolean);
-        upstoxWs.registerInstruments({
-          symbol:      safeInstrumentName,
-          indexKey:    instrumentKey,
-          futuresKey:  fKey,
-          optionKeys:  optKeys,
-          expiry:      expiryDate,
-        });
-      } catch (_) {}
+      // Upstox WebSocket tick feed disabled — REST API is the only data source
     } catch (cacheErr) {
       log(`⚠️ Cache update failed: ${cacheErr.message}`);
     }
@@ -3483,46 +3468,18 @@ async function startServer() {
     const upstoxFeed = require('./api/upstoxFeed');
     upstoxFeed(app, httpServer2, CONFIG);
 
-    // ── WebSocket server (real-time diff delivery via Redis Pub/Sub) ──────────
-    const { setupWebSocket, warmAllSymbolsFromDisk } = require('./ws/websocket');
-    setupWebSocket(httpServer2);
-
-    // Pre-warm ALL symbols into liveCache + Redis, then immediately build prefetch gzip
-    // so the very first user request hits the fast path instead of cold-loading from disk.
-    warmAllSymbolsFromDisk()
+    // Pre-warm caches on startup:
+    //   1. Redis first (instant, survives server restarts — first browser refresh is fast)
+    //   2. Then MongoDB/disk (fills any symbols not yet in Redis)
+    //   3. Finally rebuild prefetch gzip in case symbols changed
+    const { warmAllSymbolsFromDisk } = require('./ws/websocket');
+    const { warmCacheFromRedis }     = require('./api/chain');
+    warmCacheFromRedis()
+      .then(() => warmAllSymbolsFromDisk())
       .then(() => refreshPrefetchGzip().catch(() => {}))
-      .catch(e => console.error('[WS] Warm-up error:', e));
+      .catch(e => console.error('[Warmup] error:', e));
 
-    // ── Socket.IO — live option chain tick-by-tick ─────────────────────────────
-    const socketIO = require('./ws/socketio');
-    socketIO.attach(httpServer2);
-
-    // ── Upstox WebSocket tick feed ─────────────────────────────────────────────
-    const upstoxWs = require('./ws/upstoxWs');
-    upstoxWs.connect(CONFIG).catch(e => console.error('[UpstoxWS] Connect error:', e.message));
-
-    // ── OI baseline refresh every 30s from REST (feeds oi_chg in tick stream) ──
-    let _oiBaselineTimer = null;
-    function _scheduleOiBaseline() {
-      _oiBaselineTimer = setTimeout(async () => {
-        try {
-          const instruments = CONFIG.INSTRUMENTS || [];
-          for (const instKey of instruments) {
-            const token = getActiveToken();
-            if (!token) break;
-            const cached = _contractCache[instKey];
-            if (!cached?.dates?.length) continue;
-            const expiry = getExpiriesToFetch(cached.dates).current;
-            try {
-              const resp = await fetchOptionChain(expiry, instKey, token);
-              if (resp?.data) upstoxWs.updateOiBaseline(resp.data);
-            } catch (_) {}
-          }
-        } catch (_) {}
-        _scheduleOiBaseline();
-      }, 30000);
-    }
-    _scheduleOiBaseline();
+    // Upstox WebSocket tick feed disabled — REST API is the only data source
 
     // ── Crypto feed (Delta Exchange WebSocket) ────────────────────────────────
     const cryptoFeed = require('./crypto/cryptoFeed');

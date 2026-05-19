@@ -7,7 +7,17 @@ const liveCache = require('../liveCache');
 const { PATHS } = require('../config/paths');
 const { OptionChain, unpackDoc } = require('../db/models/OptionChain');
 
-const gzipAsync = promisify(zlib.gzip);
+const gzipAsync   = promisify(zlib.gzip);
+const gunzipAsync = promisify(zlib.gunzip);
+
+// Lazy Redis accessor — won't crash if Redis is unavailable
+function getRedis() {
+  try { return require('../ws/redis').pub; } catch (_) { return null; }
+}
+
+const REDIS_GZIP_TTL   = 7200; // 2 h — survives short server restart windows
+const REDIS_PREFETCH_KEY = 'CHAIN_PREFETCH_GZIP';
+const redisGzipKey = sym => `CHAIN_LIVE_GZIP:${sym.toUpperCase()}`;
 
 // ── Configured symbol order (set by server.js after init) ────────────────────
 let _configuredSymbols = null; // ordered list from instruments.json, e.g. ['NIFTY','BANKNIFTY',...]
@@ -45,6 +55,8 @@ async function refreshLiveGzip(symbol, data) {
   try {
     const buf = await gzipAsync(JSON.stringify(data));
     _liveGzipCache.set(symbol, buf);
+    const redis = getRedis();
+    if (redis) redis.setex(redisGzipKey(symbol), REDIS_GZIP_TTL, buf.toString('base64')).catch(() => {});
   } catch (_) {}
 }
 
@@ -72,6 +84,8 @@ async function refreshPrefetchGzip() {
     const liveData = firstSym ? (liveCache.get(firstSym) || null) : null;
     const payload  = JSON.stringify({ liveSymbols, allSymbols, liveData, firstSymbol: firstSym });
     _prefetchGzip  = await gzipAsync(payload);
+    const redis = getRedis();
+    if (redis) redis.setex(REDIS_PREFETCH_KEY, REDIS_GZIP_TTL, _prefetchGzip.toString('base64')).catch(() => {});
   } catch (_) {
   } finally {
     _prefetchBuildPending = false;
@@ -3359,3 +3373,40 @@ module.exports.loadLiveFromDisk      = loadLiveFromDisk;
 module.exports.loadLiveFromDB        = loadLiveFromDB;
 module.exports.setConfiguredSymbols  = (syms) => { _configuredSymbols = syms ? [...syms] : null; };
 module.exports.refreshPrefetchGzip   = refreshPrefetchGzip;
+
+// Warm RAM caches from Redis on startup — makes first browser refresh instant
+// even immediately after a server restart (Redis survives process restarts).
+module.exports.warmCacheFromRedis = async function warmCacheFromRedis() {
+  const redis = getRedis();
+  if (!redis) return;
+  try {
+    // Warm prefetch gzip
+    const pfRaw = await redis.get(REDIS_PREFETCH_KEY).catch(() => null);
+    if (pfRaw) {
+      _prefetchGzip = Buffer.from(pfRaw, 'base64');
+      console.log('[Cache] Prefetch gzip warmed from Redis');
+    }
+
+    // Warm all per-symbol live gzip buffers
+    const keys = await redis.keys('CHAIN_LIVE_GZIP:*').catch(() => []);
+    if (keys.length) {
+      const vals = await redis.mget(...keys).catch(() => []);
+      let warmed = 0;
+      for (let i = 0; i < keys.length; i++) {
+        if (!vals[i]) continue;
+        const sym = keys[i].replace('CHAIN_LIVE_GZIP:', '');
+        const buf = Buffer.from(vals[i], 'base64');
+        _liveGzipCache.set(sym, buf);
+        // Also warm liveCache (JSON) from gzip so REST polling has data immediately
+        try {
+          const json = JSON.parse((await gunzipAsync(buf)).toString());
+          liveCache.setFromDB(sym, json);
+        } catch (_) {}
+        warmed++;
+      }
+      console.log(`[Cache] Warmed ${warmed} symbol gzip buffers from Redis`);
+    }
+  } catch (e) {
+    console.warn('[Cache] Redis warm-up skipped:', e.message);
+  }
+};

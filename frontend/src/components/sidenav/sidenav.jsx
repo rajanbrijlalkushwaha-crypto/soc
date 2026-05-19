@@ -24,7 +24,7 @@ export default function SideNav() {
     { type: 'SET_AI_TRAIN',        payload: false },
     { type: 'SET_AI_STOCK',        payload: false },
     { type: 'SET_JOIN_MEET',       payload: false },
-    { type: 'SET_LIVE_OC',         payload: false },
+
     { type: 'SET_TEAM_PAGE',       payload: false },
     { type: 'SET_SUBSCRIPTION_PAGE', payload: false },
     { type: 'SET_HEATMAP',           payload: false },
@@ -43,7 +43,7 @@ export default function SideNav() {
   const goAITrain    = () => navigate('/ai-train',     [...RESET, { type: 'SET_AI_TRAIN',        payload: true  }]);
   const goAIStock    = () => navigate('/ai-stock',     [...RESET, { type: 'SET_AI_STOCK',        payload: true  }]);
   const goJoinMeet   = () => navigate('/join-meet',    [...RESET, { type: 'SET_JOIN_MEET',       payload: true  }]);
-  const goLiveOC     = () => navigate('/live-oc',      [...RESET, { type: 'SET_LIVE_OC',          payload: true  }]);
+
   const goTeam         = () => navigate('/team',         [...RESET, { type: 'SET_TEAM_PAGE',         payload: true  }]);
   const goSubscription = () => navigate('/subscription', [...RESET, { type: 'SET_SUBSCRIPTION_PAGE', payload: true  }]);
   const goHeatmap      = () => navigate('/heatmap',      [...RESET, { type: 'SET_HEATMAP',           payload: true  }]);
@@ -67,7 +67,6 @@ export default function SideNav() {
 
   const userRole = state.user?.role || 'user';
   const isJoinMeet     = state.joinMeetActive;
-  const isLiveOC       = state.liveOCActive;
   const isHeatmap      = state.heatmapActive;
   const isFiiDii       = state.fiiDiiActive;
   const isAdminOrMember = userRole === 'admin' || userRole === 'member';
@@ -83,8 +82,7 @@ export default function SideNav() {
     { section: 'Main', items: [
       { icon: '🏠', label: 'Dashboard',         tooltip: 'Dashboard',         active: isDashboard,  onClick: goDashboard  },
       { icon: '📊', label: 'Live Option Chain',  tooltip: 'Live Option Chain',  active: isLive,       onClick: goLive       },
-      { icon: '⚡', label: 'Live OC (Ticks)',    tooltip: 'Live OC — tick-by-tick via WebSocket', active: isLiveOC, onClick: goLiveOC },
-      { icon: '📅', label: 'Historical Data',    tooltip: 'Historical Data',   active: isHistorical, onClick: goHistorical },
+{ icon: '📅', label: 'Historical Data',    tooltip: 'Historical Data',   active: isHistorical, onClick: goHistorical },
       { icon: '🔥', label: 'Stock Heatmap',      tooltip: 'Nifty 50 Stock Heatmap', active: isHeatmap, onClick: goHeatmap },
       { icon: '🏦', label: 'FII / DII',          tooltip: 'FII & DII Activity',      active: isFiiDii,  onClick: goFiiDii  },
     ]},
