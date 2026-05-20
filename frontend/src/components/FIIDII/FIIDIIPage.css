@@ -62,6 +62,26 @@
 .fiidii-refresh-btn:hover:not(:disabled) { background: #1d3a9e; }
 .fiidii-refresh-btn:disabled { opacity: 0.6; cursor: default; }
 
+.fiidii-download-btn {
+  padding: 7px 18px;
+  background: #15803d;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.fiidii-download-btn:hover:not(:disabled) { background: #166534; }
+.fiidii-download-btn:disabled { opacity: 0.6; cursor: default; }
+
+.fiidii-status {
+  font-size: 12px;
+  color: #2563eb;
+  font-weight: 600;
+}
+
 /* ── Body ────────────────────────────────────────────────────────────── */
 .fiidii-body {
   flex: 1;

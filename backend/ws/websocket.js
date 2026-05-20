@@ -236,19 +236,51 @@ function broadcastFull(symbol, full) {
   }
 }
 
+/** Convert REST API snapshot (call/put keys) to Socket.IO format (ce/pe keys) */
+function _toOCPayload(sym, snap) {
+  return {
+    symbol:   sym,
+    expiry:   snap.expiry    || '',
+    spot:     snap.spot_price  || 0,
+    spot_chg: snap.spot_change || 0,
+    fut_ltp:  snap.futures_ltp || 0,
+    ts:       Date.now(),
+    chain: (snap.chain || []).map(r => ({
+      strike: r.strike,
+      ce: r.call ? { ltp: r.call.ltp||0, ltp_chg: r.call.ltp_change||0, oi: r.call.oi||0,
+                      oi_chg: r.call.oi_change||0, vol: r.call.volume||0, iv: r.call.iv||0,
+                      delta: r.call.delta||0, bid: r.call.bid||0, ask: r.call.ask||0 } : null,
+      pe: r.put  ? { ltp: r.put.ltp||0,  ltp_chg: r.put.ltp_change||0,  oi: r.put.oi||0,
+                      oi_chg: r.put.oi_change||0,  vol: r.put.volume||0,  iv: r.put.iv||0,
+                      delta: r.put.delta||0,  bid: r.put.bid||0,  ask: r.put.ask||0 } : null,
+    })),
+  };
+}
+
 /**
- * Publish diff to all subscribers directly (no Redis).
- * liveCache.set() already upserted to liveserver1, so no extra DB write here.
+ * Called every fetch cycle with the latest snapshot.
+ * - Sends diff to native WebSocket clients directly
+ * - Publishes OC payload to Redis so Socket.IO clients get live updates
  */
 async function publishUpdate(symbol, full, diff) {
   const sym = symbol.toUpperCase();
-  if (!diff) return;
-  const msg = JSON.stringify({ type: 'diff', symbol: sym, data: diff });
-  for (const [ws, syms] of clients) {
-    if (ws.readyState === WebSocket.OPEN && syms.has(sym)) {
-      ws.send(msg);
+
+  // Native WebSocket clients — direct diff
+  if (diff) {
+    const msg = JSON.stringify({ type: 'diff', symbol: sym, data: diff });
+    for (const [ws, syms] of clients) {
+      if (ws.readyState === WebSocket.OPEN && syms.has(sym)) ws.send(msg);
     }
   }
+
+  // Socket.IO clients — publish full state in OC format via Redis
+  try {
+    const { pub } = require('./redis');
+    const ocPayload = _toOCPayload(sym, full);
+    const str = JSON.stringify(ocPayload);
+    await pub.set(`OC_STATE:${sym}`, str, 'EX', 3600);
+    await pub.publish(`OC:${sym}`, str);
+  } catch (_) {}
 }
 
 // ── Main setup ────────────────────────────────────────────────────────────────

@@ -1,5 +1,4 @@
 import { useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { useOptionChainWS } from './hooks/useOptionChainWS';
 import { AppProvider, useApp } from './context/AppContext';
 import { fetchSymbols, fetchLiveData, fetchLiveSignals, fetchShiftingData, fetchMCTRData, fetchStrategy40Data, fetchPrefetch } from './services/api';
 import IndexPage from './components/Index/IndexPage';
@@ -32,7 +31,6 @@ const NotificationPanel  = lazy(() => import('./components/Notifications/Notific
 const AITrainPanel       = lazy(() => import('./components/AITrain/AITrainPanel'));
 const AIStockPanel       = lazy(() => import('./components/AIStock/AIStockPanel'));
 const JoinMeetPage       = lazy(() => import('./components/JoinMeet/JoinMeetPage'));
-const LiveOCPage         = lazy(() => import('./components/LiveOC/LiveOCPage'));
 const HeatmapPage        = lazy(() => import('./components/Heatmap/HeatmapPage'));
 const FIIDIIPage         = lazy(() => import('./components/FIIDII/FIIDIIPage'));
 
@@ -71,8 +69,6 @@ function AppContent() {
       dispatch({ type: 'SET_AI_STOCK', payload: true });
     } else if (path === '/join-meet') {
       dispatch({ type: 'SET_JOIN_MEET', payload: true });
-    } else if (path === '/live-oc') {
-      dispatch({ type: 'SET_LIVE_OC', payload: true });
     } else if (path === '/heatmap') {
       dispatch({ type: 'SET_HEATMAP', payload: true });
     } else if (path === '/fii-dii') {
@@ -189,48 +185,24 @@ function AppContent() {
     } catch (_) {}
   }, [state.user, state.symbols, dispatch]);
 
-  // ── WebSocket live data — primary delivery ────────────────────────────────
-  const wsSymbol = state.historicalMode ? null : state.currentSymbol;
-  const { data: wsData, connected: wsConnected } = useOptionChainWS(wsSymbol);
-  const wsFallbackRef = useRef(null);
-  const wsDataReceivedRef = useRef(false);
+  // ── REST polling — live data every 8 s ───────────────────────────────────
+  const restIntervalRef = useRef(null);
 
-  // Push WS data into app state the moment it arrives
-  useEffect(() => {
-    if (!wsData) return;
-    wsDataReceivedRef.current = true;
-    dispatch({ type: 'SET_LIVE_DATA', payload: wsData });
-  }, [wsData, dispatch]);
-
-  // On symbol change: fetch from server, WS FULL takes over when it arrives
   useEffect(() => {
     if (!state.currentSymbol || state.historicalMode) return;
-    wsDataReceivedRef.current = false;
-    clearInterval(wsFallbackRef.current);
+    clearInterval(restIntervalRef.current);
 
-    const loadOnce = async () => {
-      if (wsDataReceivedRef.current) return; // WS was faster — skip
+    const load = async () => {
       try {
         const data = await fetchLiveData(state.currentSymbol);
-        if (!wsDataReceivedRef.current) dispatch({ type: 'SET_LIVE_DATA', payload: data });
+        dispatch({ type: 'SET_LIVE_DATA', payload: data });
       } catch (_) {}
     };
 
-    // Fire immediately — race with WS FULL (whichever arrives first wins)
-    loadOnce();
-
-    // If WS stays disconnected, keep polling every 8s
-    if (!wsConnected) {
-      wsFallbackRef.current = setInterval(async () => {
-        try {
-          const data = await fetchLiveData(state.currentSymbol);
-          dispatch({ type: 'SET_LIVE_DATA', payload: data });
-        } catch (_) {}
-      }, 8000);
-    }
-
-    return () => clearInterval(wsFallbackRef.current);
-  }, [state.currentSymbol, state.historicalMode, wsConnected, dispatch]);
+    load();
+    restIntervalRef.current = setInterval(load, 8000);
+    return () => clearInterval(restIntervalRef.current);
+  }, [state.currentSymbol, state.historicalMode, dispatch]);
 
   // Historical shifting data — only in historical mode (reads from disk, no polling needed)
   useEffect(() => {
@@ -359,7 +331,6 @@ function AppContent() {
     const base = 'Soc.ai.in';
     let page = '';
     if (state.heatmapActive)       page = 'Stock Heatmap';
-    else if (state.liveOCActive)   page = 'Live OC';
     else if (state.holidayListActive) page = 'Holiday List';
     else if (state.supportActive)  page = 'Support';
     else if (state.profileActive)  page = 'Profile';
@@ -376,7 +347,7 @@ function AppContent() {
     else page = 'Live Option Chain';
     document.title = `${base} | ${page}`;
   }, [
-    state.heatmapActive, state.liveOCActive, state.holidayListActive, state.supportActive, state.profileActive,
+    state.heatmapActive, state.holidayListActive, state.supportActive, state.profileActive,
     state.adminPanelActive, state.subscriptionActive, state.journalActive,
     state.teamPageActive, state.aiTrainActive, state.aiStockActive, state.aiPageActive,
     state.aiPageType, state.indexPageActive, state.historicalMode,
@@ -394,7 +365,6 @@ function AppContent() {
   const renderMain = () => {
     if (state.heatmapActive)     return <HeatmapPage />;
     if (state.fiiDiiActive)      return <FIIDIIPage />;
-    if (state.liveOCActive)      return <LiveOCPage />;
     if (state.joinMeetActive)    return <JoinMeetPage />;
     if (state.holidayListActive) return <HolidayListPanel />;
     if (state.supportActive)     return <SupportPanel />;

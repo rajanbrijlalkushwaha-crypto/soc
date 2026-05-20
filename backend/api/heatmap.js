@@ -1,15 +1,17 @@
 'use strict';
-const express = require('express');
-const router  = express.Router();
+const express   = require('express');
+const liveCache = require('../liveCache');
+const router    = express.Router();
 
 // Nifty 50 stocks — symbol, name, sector, market cap weight, Upstox instrument key
+// cacheKey: the symbol used in liveCache (matches server instruments list)
 const NIFTY50 = [
   { sym:'HDFCBANK',   name:'HDFC Bank',      sector:'Finance',    mcap:11000, key:'NSE_EQ|INE040A01034' },
   { sym:'ICICIBANK',  name:'ICICI Bank',      sector:'Finance',    mcap:8000,  key:'NSE_EQ|INE090A01021' },
   { sym:'SBIN',       name:'SBIN',            sector:'Finance',    mcap:7000,  key:'NSE_EQ|INE062A01020' },
   { sym:'BAJFINANCE', name:'Bajaj Finance',   sector:'Finance',    mcap:5000,  key:'NSE_EQ|INE296A01024' },
   { sym:'ITC',        name:'ITC',             sector:'Finance',    mcap:5500,  key:'NSE_EQ|INE154A01025' },
-  { sym:'KOTAKBANK',  name:'Kotak Bank',      sector:'Finance',    mcap:4000,  key:'NSE_EQ|INE237A01028' },
+  { sym:'KOTAKBANK',  name:'Kotak Bank',      sector:'Finance',    mcap:4000,  key:'NSE_EQ|INE774D01024' },
   { sym:'AXISBANK',   name:'Axis Bank',       sector:'Finance',    mcap:3500,  key:'NSE_EQ|INE238A01034' },
   { sym:'BAJAJFINSV', name:'Bajaj Finserv',   sector:'Finance',    mcap:2000,  key:'NSE_EQ|INE918I01026' },
   { sym:'SBILIFE',    name:'SBI Life',        sector:'Finance',    mcap:1500,  key:'NSE_EQ|INE123W01016' },
@@ -24,28 +26,28 @@ const NIFTY50 = [
   { sym:'INFY',       name:'Infosys',         sector:'Technology', mcap:7000,  key:'NSE_EQ|INE009A01021' },
   { sym:'HCLTECH',    name:'HCL Tech',        sector:'Technology', mcap:4500,  key:'NSE_EQ|INE860A01027' },
   { sym:'WIPRO',      name:'Wipro',           sector:'Technology', mcap:3000,  key:'NSE_EQ|INE075A01022' },
-  { sym:'TECHM',      name:'Tech Mahindra',   sector:'Technology', mcap:1200,  key:'NSE_EQ|INE669C01036' },
-  { sym:'ETERNAL',    name:'Eternal (Zomato)','sector':'Technology',mcap:1500, key:'NSE_EQ|INE758T01015' },
+  { sym:'TECHM',      name:'Tech Mahindra',   sector:'Technology', mcap:1200,  key:'NSE_EQ|INE261F01014' },
+  { sym:'ETERNAL',    name:'Eternal (Zomato)',sector:'Technology',  mcap:1500,  key:'NSE_EQ|INE758T01015', cacheKey:'JIOFIN' },
 
   { sym:'MARUTI',     name:'Maruti Suzuki',   sector:'Auto',       mcap:4000,  key:'NSE_EQ|INE585B01010' },
-  { sym:'M&M',        name:'M&M',             sector:'Auto',       mcap:3500,  key:'NSE_EQ|INE101A01026' },
+  { sym:'M&M',        name:'M&M',             sector:'Auto',       mcap:3500,  key:'NSE_EQ|INE101A01026', cacheKey:'M_M' },
   { sym:'BAJAJ-AUTO', name:'Bajaj Auto',      sector:'Auto',       mcap:2000,  key:'NSE_EQ|INE917I01010' },
   { sym:'EICHERMOT',  name:'Eicher Motors',   sector:'Auto',       mcap:1500,  key:'NSE_EQ|INE066A01021' },
-  { sym:'TATAMOTORS', name:'Tata Motors',     sector:'Auto',       mcap:3000,  key:'NSE_EQ|INE155A01022' },
+  { sym:'TATAMOTORS', name:'Tata Motors',     sector:'Auto',       mcap:3000,  key:'NSE_EQ|INE155A01022', cacheKey:'TATAMTRS' },
 
   { sym:'TITAN',      name:'Titan',           sector:'Consumer',   mcap:3000,  key:'NSE_EQ|INE280A01028' },
   { sym:'TATACONSUM', name:'Tata Consumer',   sector:'Consumer',   mcap:1200,  key:'NSE_EQ|INE192A01025' },
   { sym:'HINDUNILVR', name:'HUL',             sector:'Consumer',   mcap:5000,  key:'NSE_EQ|INE030A01027' },
   { sym:'NESTLEIND',  name:'Nestle',          sector:'Consumer',   mcap:2500,  key:'NSE_EQ|INE239A01024' },
 
-  { sym:'SUNPHARMA',  name:'Sun Pharma',      sector:'Healthcare', mcap:3500,  key:'NSE_EQ|INE044A01036' },
+  { sym:'SUNPHARMA',  name:'Sun Pharma',      sector:'Healthcare', mcap:3500,  key:'NSE_EQ|INE160A01022' },
   { sym:'DRDREDDY',   name:"Dr Reddy's",      sector:'Healthcare', mcap:1500,  key:'NSE_EQ|INE089A01023' },
   { sym:'CIPLA',      name:'Cipla',           sector:'Healthcare', mcap:1500,  key:'NSE_EQ|INE059A01026' },
   { sym:'APOLLOHOSP', name:'Apollo Hosp',     sector:'Healthcare', mcap:1000,  key:'NSE_EQ|INE437A01024' },
   { sym:'MAXHEALTH',  name:'Max Healthcare',  sector:'Healthcare', mcap:900,   key:'NSE_EQ|INE027H01010' },
 
-  { sym:'JSWSTEEL',   name:'JSW Steel',       sector:'Metals',     mcap:2000,  key:'NSE_EQ|INE019A01038' },
-  { sym:'TATASTEEL',  name:'Tata Steel',      sector:'Metals',     mcap:1800,  key:'NSE_EQ|INE081A01012' },
+  { sym:'JSWSTEEL',   name:'JSW Steel',       sector:'Metals',     mcap:2000,  key:'NSE_EQ|INE205A01025' },
+  { sym:'TATASTEEL',  name:'Tata Steel',      sector:'Metals',     mcap:1800,  key:'NSE_EQ|INE081A01020' },
   { sym:'HINDALCO',   name:'Hindalco',        sector:'Metals',     mcap:1500,  key:'NSE_EQ|INE038A01020' },
   { sym:'ULTRACEMCO', name:'UltraTech Cem',   sector:'Metals',     mcap:2000,  key:'NSE_EQ|INE481G01011' },
   { sym:'GRASIM',     name:'Grasim',          sector:'Metals',     mcap:1800,  key:'NSE_EQ|INE047A01021' },
@@ -63,7 +65,7 @@ const NIFTY50 = [
   { sym:'ASIANPAINT', name:'Asian Paints',    sector:'Chemicals',  mcap:2000,  key:'NSE_EQ|INE021A01026' },
 ];
 
-// Last successful data cache (5 min TTL)
+// 30-second response cache
 let _cache = null;
 let _cacheTs = 0;
 
@@ -76,14 +78,6 @@ async function fetchUpstoxLTP(accessToken, keys) {
   return res.json();
 }
 
-function getAccessToken(req) {
-  try {
-    const appsList = require('../db/models/Config.js');
-    // Try to get from req.app (stored by server.js) or from config
-    return req.app?.locals?.upstoxToken || null;
-  } catch { return null; }
-}
-
 router.get('/nifty50', async (req, res) => {
   try {
     // Serve cache if fresh (< 30s)
@@ -91,36 +85,46 @@ router.get('/nifty50', async (req, res) => {
       return res.json({ success: true, stocks: _cache, cached: true });
     }
 
-    // Try Upstox LTP
-    let priceMap = {};
-    try {
-      const token = req.app?.locals?.upstoxToken;
-      if (token) {
-        const keys = NIFTY50.map(s => s.key);
-        const chunk = keys.slice(0, 50); // API limit
-        const data  = await fetchUpstoxLTP(token, chunk);
-        if (data?.data) {
-          for (const [k, v] of Object.entries(data.data)) {
-            const sym = k.split(':')[1]; // "NSE_EQ:RELIANCE" → "RELIANCE"
-            priceMap[sym] = v.last_price;
+    // ── Primary: read from liveCache (populated every 10s by REST fetch cycle) ──
+    const priceMap = {};
+    for (const s of NIFTY50) {
+      const key  = s.cacheKey || s.sym;
+      const live = liveCache.get(key);
+      if (live?.spot_price) {
+        priceMap[s.sym] = { ltp: live.spot_price, pct: live.spot_pct_change ?? null };
+      }
+    }
+
+    // ── Fallback: Upstox LTP API (only if access token is set) ─────────────────
+    const accessToken = process.env.ACCESS_TOKEN || '';
+    if (accessToken) {
+      try {
+        const missing = NIFTY50.filter(s => !priceMap[s.sym]);
+        if (missing.length) {
+          const data = await fetchUpstoxLTP(accessToken, missing.map(s => s.key));
+          if (data?.data) {
+            for (const [k, v] of Object.entries(data.data)) {
+              const instrumentKey = k.replace(':', '|'); // "NSE_EQ:RELIANCE" → "NSE_EQ|RELIANCE"
+              const stock = NIFTY50.find(s => s.key === instrumentKey || k.includes(s.sym));
+              if (stock && v.last_price) {
+                priceMap[stock.sym] = { ltp: v.last_price, pct: null };
+              }
+            }
           }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
 
-    const stocks = NIFTY50.map(s => {
-      const ltp = priceMap[s.sym] || null;
-      return {
-        sym:    s.sym,
-        name:   s.name,
-        sector: s.sector,
-        mcap:   s.mcap,
-        ltp,
-        pct:    null, // will be null if no live data
-      };
-    });
+    const stocks = NIFTY50.map(s => ({
+      sym:    s.sym,
+      name:   s.name,
+      sector: s.sector,
+      mcap:   s.mcap,
+      ltp:    priceMap[s.sym]?.ltp  ?? null,
+      pct:    priceMap[s.sym]?.pct  ?? null,
+    }));
 
-    _cache  = stocks;
+    _cache   = stocks;
     _cacheTs = Date.now();
 
     res.json({ success: true, stocks });

@@ -24,10 +24,12 @@ function formatDate(raw) {
 const PAGE_SIZE = 10;
 
 export default function FIIDIIPage() {
-  const [data, setData]         = useState([]);
-  const [loading, setLoading]   = useState(true);
+  const [data, setData]             = useState([]);
+  const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [page, setPage]         = useState(1);
+  const [downloading, setDownloading] = useState(false);
+  const [statusMsg, setStatusMsg]   = useState('');
+  const [page, setPage]             = useState(1);
   const [lastUpdate, setLastUpdate] = useState(null);
 
   const fetchData = useCallback(async () => {
@@ -44,11 +46,35 @@ export default function FIIDIIPage() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    setStatusMsg('');
     try {
       await fetch(`${API_BASE}/api/fiidii/refresh`, { method: 'POST', credentials: 'include' });
       await fetchData();
-    } catch (_) {}
+      setStatusMsg('Refreshed successfully');
+    } catch (_) { setStatusMsg('Refresh failed'); }
     finally { setRefreshing(false); }
+  };
+
+  const handleDownloadAll = async () => {
+    setDownloading(true);
+    setStatusMsg('Downloading all data from 1 Apr 2026... (runs in background)');
+    try {
+      await fetch(`${API_BASE}/api/fiidii/download-all`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: '2026-04-01' }),
+      });
+      // Poll after 5s then 10s to pick up saved records
+      setTimeout(async () => {
+        await fetchData();
+        setStatusMsg('Download complete — data saved to MongoDB');
+        setDownloading(false);
+      }, 6000);
+    } catch (_) {
+      setStatusMsg('Download failed');
+      setDownloading(false);
+    }
   };
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -70,8 +96,12 @@ export default function FIIDIIPage() {
                 Updated {lastUpdate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
               </span>
             )}
-            <button className="fiidii-refresh-btn" onClick={handleRefresh} disabled={refreshing}>
+            {statusMsg && <span className="fiidii-status">{statusMsg}</span>}
+            <button className="fiidii-refresh-btn" onClick={handleRefresh} disabled={refreshing || downloading}>
               {refreshing ? '⟳ Fetching...' : '⟳ Refresh'}
+            </button>
+            <button className="fiidii-download-btn" onClick={handleDownloadAll} disabled={downloading || refreshing}>
+              {downloading ? '⬇ Downloading...' : '⬇ Download All (Apr 2026→)'}
             </button>
           </div>
         </div>
