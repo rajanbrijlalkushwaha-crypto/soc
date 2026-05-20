@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import AuthPage from './components/auth/Auth';
-import App from './app.jsx';
+import App from './App.jsx';
 import AdminApp from './components/admin/AdminApp';
 import './styles/index.css';
 
