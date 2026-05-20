@@ -800,16 +800,12 @@ router.get('/bootstrap', async (req, res) => {
             return res.json({ authenticated: false });
         }
 
-        const uid  = req.session.userId;
-        const user = {
-            id:    uid,
-            email: req.session.userEmail,
-            name:  req.session.userName,
-            role:  req.session.userRole || 'user',
-        };
+        const uid = req.session.userId;
 
-        // Run all three independent lookups in parallel — was sequential (3 round-trips)
-        const [settings, notifResult, subResult] = await Promise.all([
+        // Run all four independent lookups in parallel
+        const [freshUserDoc, settings, notifResult, subResult] = await Promise.all([
+            // 0. Fresh role from Atlas — fixes stale session role (e.g. promoted to admin)
+            User.findOne({ userId: uid }, 'role name email').lean().catch(() => null),
             // 1. UI settings from disk
             (async () => {
                 try {
@@ -841,6 +837,18 @@ router.get('/bootstrap', async (req, res) => {
                 } catch { return null; }
             })(),
         ]);
+
+        // Build user with fresh role from Atlas (fixes stale session role after promotion)
+        const freshRole = freshUserDoc?.role || req.session.userRole || 'user';
+        if (freshRole !== req.session.userRole) {
+            req.session.userRole = freshRole; // update session so future requests see correct role
+        }
+        const user = {
+            id:    uid,
+            email: req.session.userEmail,
+            name:  req.session.userName,
+            role:  freshRole,
+        };
 
         const notifications = notifResult.map(n => ({
             id: n.id, title: n.title, message: n.message,
