@@ -3433,10 +3433,10 @@ async function startServer() {
     console.log('╚══════════════════════════════════════════════════════════╝');
     console.log('');
 
-    // If no access token, immediately send auth link via email
+    // If no access token, send consolidated multi-app auth email
     if (!CONFIG.ACCESS_TOKEN) {
       console.log('⚠️  No ACCESS_TOKEN found — sending Upstox auth link via email immediately...');
-      sendUpstoxAuthLink().catch(e => console.error('Auto token request error:', e.message));
+      sendAllUpstoxAuthEmail().catch(e => console.error('Auto token request error:', e.message));
     }
 
     console.log("=".repeat(60));

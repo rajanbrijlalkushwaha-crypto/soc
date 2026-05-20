@@ -113,11 +113,11 @@ const AuthPage = ({ onLogin }) => {
       setLoading({ show: false, text: '' });
 
       if (data.success) {
-        showAlert('Login successful! Redirecting...', 'success');
+        showAlert('Login successful!', 'success');
         setTimeout(() => {
           if (onLogin) onLogin();
           else window.location.href = '/optionchain';
-        }, 800);
+        }, 200);
       } else {
         showAlert(data.error || 'Login failed', 'error');
       }
