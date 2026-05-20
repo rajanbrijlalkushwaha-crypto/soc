@@ -4,7 +4,7 @@ import './auth.css';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
-const AuthPage = () => {
+const AuthPage = ({ onLogin }) => {
   // State management
   const [activeTab, setActiveTab] = useState('signin');
   const [activePanel, setActivePanel] = useState('signin');
@@ -114,7 +114,10 @@ const AuthPage = () => {
 
       if (data.success) {
         showAlert('Login successful! Redirecting...', 'success');
-        setTimeout(() => window.location.href = '/optionchain', 1000);
+        setTimeout(() => {
+          if (onLogin) onLogin();
+          else window.location.href = '/optionchain';
+        }, 800);
       } else {
         showAlert(data.error || 'Login failed', 'error');
       }
@@ -192,7 +195,10 @@ const AuthPage = () => {
 
       if (data.success) {
         showAlert('Email verified! Redirecting...', 'success');
-        setTimeout(() => window.location.href = '/optionchain', 1200);
+        setTimeout(() => {
+          if (onLogin) onLogin();
+          else window.location.href = '/optionchain';
+        }, 800);
       } else {
         showAlert(data.error, 'error');
       }

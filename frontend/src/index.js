@@ -39,7 +39,10 @@ function MainApp() {
   if (params.get('reset_token')) return <AuthPage />;
 
   if (isAuthenticated) return <App />;
-  return <AuthPage />;
+  return <AuthPage onLogin={() => {
+    window.history.replaceState(null, '', '/optionchain');
+    setIsAuthenticated(true);
+  }} />;
 }
 
 function Root() {
