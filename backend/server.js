@@ -3315,6 +3315,137 @@ app.get('/api/market/timings', (_req, res) => {
 });
 
 // ================================
+// INDIA VIX & GLOBAL INDICES APIs
+// ================================
+
+const _vixCache    = { data: null, at: 0 };
+const _globalCache = { data: null, at: 0 };
+
+const GLOBAL_INSTRUMENTS = [
+  { key: 'GLOBAL_INDEX|SGX NIFTY',  name: 'GIFT Nifty',  short: 'GIFT'  },
+  { key: 'GLOBAL_INDEX|^DJI',       name: 'Dow Jones',   short: 'DOW'   },
+  { key: 'GLOBAL_INDEX|^GSPC',      name: 'S&P 500',     short: 'S&P'   },
+  { key: 'GLOBAL_INDEX|IXIX',       name: 'Nasdaq 100',  short: 'NQ100' },
+  { key: 'GLOBAL_INDEX|^N225',      name: 'Nikkei 225',  short: 'NK225' },
+  { key: 'GLOBAL_INDEX|^HSI',       name: 'Hang Seng',   short: 'HSI'   },
+  { key: 'GLOBAL_INDEX|^FTSE',      name: 'FTSE 100',    short: 'FTSE'  },
+  { key: 'GLOBAL_INDEX|^GDAXI',     name: 'DAX',         short: 'DAX'   },
+  { key: 'GLOBAL_INDEX|^FCHI',      name: 'CAC 40',      short: 'CAC'   },
+  { key: 'GLOBAL_INDEX|DOW FUTURES',name: 'US 30 Fut',   short: 'US30'  },
+];
+
+async function _doFetchVix() {
+  const token = getActiveToken() || (_getTokens()[0]?.token) || CONFIG.ACCESS_TOKEN;
+  if (!token) return null;
+  try {
+    const resp = await axios.get(`${CONFIG.UPSTOX_BASE_URL}/market-quote/quotes`, {
+      params: { instrument_key: 'NSE_INDEX|India VIX' },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+      timeout: 8000,
+    });
+    const raw = resp.data?.data || {};
+    const q   = raw['NSE_INDEX:India VIX'] || raw['NSE_INDEX|India VIX'] || Object.values(raw)[0] || null;
+    if (!q) return null;
+    const ltp    = q.last_price || 0;
+    const netChg = q.net_change ?? 0;
+    const prev   = ltp - netChg;
+    const pct    = prev > 0 ? (netChg / prev) * 100 : 0;
+    const vData  = { ltp, prev_close: prev, change: netChg, pct_change: pct };
+    if (ltp > 0) { _vixCache.data = vData; _vixCache.at = Date.now(); }
+    return vData;
+  } catch (e) { log(`[VIX fetch] ${e.message}`); return null; }
+}
+
+async function _doFetchGlobal() {
+  const token = getActiveToken() || (_getTokens()[0]?.token) || CONFIG.ACCESS_TOKEN;
+  if (!token) return null;
+  try {
+    const allKeys = GLOBAL_INSTRUMENTS.map(g => g.key);
+    const encoded = encodeURIComponent(allKeys.join(',')).replace(/%2C/gi, ',');
+    const url = `${CONFIG.UPSTOX_BASE_URL}/market-quote/quotes?instrument_key=${encoded}`;
+    const resp = await axios.get(url, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+      timeout: 10000,
+    });
+    const rawData = resp.data?.data || {};
+    const data = GLOBAL_INSTRUMENTS.map(g => {
+      const colonKey = g.key.replace('|', ':');
+      const q      = rawData[g.key] || rawData[colonKey] || rawData[g.key.replace(/\|/g, '%7C')] || null;
+      const ltp    = q?.last_price || 0;
+      const netChg = q?.net_change ?? 0;
+      const prev   = ltp - netChg;
+      const pct    = prev > 0 ? (netChg / prev) * 100 : 0;
+      return { key: g.key, name: g.name, short: g.short, ltp, prev_close: prev, change: netChg, pct_change: pct };
+    });
+    if (data.some(d => d.ltp > 0)) { _globalCache.data = data; _globalCache.at = Date.now(); }
+    return data;
+  } catch (e) { log(`[Global fetch] ${e.message}`); return null; }
+}
+
+app.get('/api/market/vix', requireAuth, async (req, res) => {
+  try {
+    if (_vixCache.data && Date.now() - _vixCache.at < 60_000)
+      return res.json({ success: true, data: _vixCache.data });
+    const vData = await _doFetchVix();
+    res.json(vData ? { success: true, data: vData } : { success: false, data: null });
+  } catch (e) {
+    res.json({ success: false, error: e.message, data: null });
+  }
+});
+
+app.get('/api/market/global-indices', requireAuth, async (req, res) => {
+  try {
+    if (_globalCache.data && Date.now() - _globalCache.at < 60_000)
+      return res.json({ success: true, data: _globalCache.data });
+    const data = await _doFetchGlobal();
+    res.json(data ? { success: true, data } : { success: false, data: [] });
+  } catch (e) {
+    res.json({ success: false, error: e.message, data: [] });
+  }
+});
+
+// ── Scheduled background fetches (IST, Mon–Fri) ───────────────────────────────
+// India VIX:      09:00 AM
+// Global indices: 12:30 PM + 08:30 PM
+const _mktFetched = new Set();
+setInterval(() => {
+  const ist = new Date(Date.now() + 5.5 * 3600_000);
+  const dow = ist.getUTCDay();
+  if (dow === 0 || dow === 6) return;
+  const hh  = ist.getUTCHours();
+  const mm  = ist.getUTCMinutes();
+  const dd  = ist.toISOString().split('T')[0];
+
+  // VIX at 09:00–09:02 IST
+  if (hh === 9 && mm <= 2) {
+    const slot = `${dd}_vix_09`;
+    if (!_mktFetched.has(slot)) {
+      _mktFetched.add(slot);
+      log('[VIX] 9:00 AM IST — scheduled fetch');
+      _doFetchVix().then(d => d && log(`[VIX] cached ltp=${d.ltp}`)).catch(() => {});
+    }
+  }
+  // Global at 12:30–12:32 IST
+  if (hh === 12 && mm >= 30 && mm <= 32) {
+    const slot = `${dd}_global_1230`;
+    if (!_mktFetched.has(slot)) {
+      _mktFetched.add(slot);
+      log('[Global] 12:30 PM IST — scheduled fetch');
+      _doFetchGlobal().then(d => d && log(`[Global] cached ${d.filter(x => x.ltp > 0).length} indices`)).catch(() => {});
+    }
+  }
+  // Global at 20:30–20:32 IST
+  if (hh === 20 && mm >= 30 && mm <= 32) {
+    const slot = `${dd}_global_2030`;
+    if (!_mktFetched.has(slot)) {
+      _mktFetched.add(slot);
+      log('[Global] 8:30 PM IST — scheduled fetch');
+      _doFetchGlobal().then(d => d && log(`[Global] cached ${d.filter(x => x.ltp > 0).length} indices`)).catch(() => {});
+    }
+  }
+}, 60_000);
+
+// ================================
 // SESSION & AUTH APIs
 // ================================
 app.get("/api/auth/check-session", (req, res) => {

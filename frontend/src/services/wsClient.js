@@ -129,6 +129,7 @@ class WSClient {
 }
 
 const wsClient = new WSClient();
-wsClient.connect(); // Connect immediately on import
+// WebSocket disabled — REST API only
+// wsClient.connect();
 
 export default wsClient;

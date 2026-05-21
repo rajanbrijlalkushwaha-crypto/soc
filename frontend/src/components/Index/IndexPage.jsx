@@ -126,17 +126,124 @@ function isExchangeOpen(startMs, endMs) {
   return nowMins >= startMins && nowMins <= endMins;
 }
 
+// VIX zone definitions — used by both the gauge and level label
+const VIX_ZONES = [
+  { from: 0,  to: 12, color: '#3b82f6', label: 'Very Low'  },
+  { from: 12, to: 17, color: '#22c55e', label: 'Low'       },
+  { from: 17, to: 21, color: '#84cc16', label: 'Normal'    },
+  { from: 21, to: 26, color: '#eab308', label: 'Elevated'  },
+  { from: 26, to: 33, color: '#f97316', label: 'High'      },
+  { from: 33, to: 40, color: '#ef4444', label: 'Extreme'   },
+];
+
+function vixLevel(v) {
+  const z = VIX_ZONES.find(z => v >= z.from && v < z.to) || VIX_ZONES[VIX_ZONES.length - 1];
+  return z || { label: '—', color: '#94a3b8' };
+}
+
+// SVG speedometer gauge for India VIX
+function VixGauge({ vix }) {
+  const MAX = 40;
+  const CX = 140, CY = 138;
+  const RO = 112, RI = 80;
+
+  const pt = (v, r) => {
+    const a = (Math.min(Math.max(v, 0), MAX) / MAX) * Math.PI;
+    return [+(CX - r * Math.cos(a)).toFixed(2), +(CY - r * Math.sin(a)).toFixed(2)];
+  };
+
+  const arcSeg = (v1, v2, ro, ri) => {
+    const [x1, y1] = pt(v1, ro), [x2, y2] = pt(v2, ro);
+    const [x3, y3] = pt(v2, ri), [x4, y4] = pt(v1, ri);
+    const lg = (v2 - v1) >= MAX * 0.5 ? 1 : 0;
+    return `M${x1},${y1} A${ro},${ro} 0 ${lg} 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 ${lg} 0 ${x4},${y4}Z`;
+  };
+
+  const val    = Math.max(0, vix?.ltp || 0);
+  const change = vix?.change || 0;
+  const pct    = vix?.pct_change || 0;
+  const lvl    = vixLevel(val);
+  const [nx, ny] = pt(Math.min(val, MAX), 92);
+
+  const ticks = Array.from({ length: 41 }, (_, i) => {
+    const v = i;
+    const isMaj = v % 10 === 0;
+    const isMed = v % 5 === 0 && !isMaj;
+    const len = isMaj ? 14 : isMed ? 9 : 5;
+    const [ox, oy] = pt(v, RO + 2);
+    const [ix, iy] = pt(v, RO + len);
+    return { v, ox, oy, ix, iy, isMaj, isMed };
+  });
+
+  return (
+    <svg viewBox="0 0 280 220" style={{ width: '100%', display: 'block' }}>
+      {/* Dark ring background */}
+      <path d={arcSeg(0, MAX, RO + 16, RI - 6)} fill="#0d1a2e" />
+
+      {/* Colored zone arcs */}
+      {VIX_ZONES.map(z => (
+        <path key={z.from} d={arcSeg(z.from, Math.min(z.to, MAX), RO, RI)} fill={z.color} />
+      ))}
+
+      {/* Tick marks */}
+      {ticks.map(({ v, ox, oy, ix, iy, isMaj, isMed }) => (
+        <line key={v} x1={ox} y1={oy} x2={ix} y2={iy}
+          stroke="rgba(255,255,255,0.85)" strokeWidth={isMaj ? 2 : isMed ? 1.5 : 0.8} />
+      ))}
+
+      {/* Scale labels */}
+      {[0, 10, 20, 30, 40].map(v => {
+        const [lx, ly] = pt(v, RO + 25);
+        return <text key={v} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle"
+          fontSize="10" fill="rgba(255,255,255,0.8)" fontWeight="700">{v}</text>;
+      })}
+
+      {/* Needle */}
+      <line x1={CX} y1={CY} x2={nx} y2={ny}
+        stroke="white" strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx={CX} cy={CY} r="10" fill="white" />
+      <circle cx={CX} cy={CY} r="7"  fill="#0d1a2e" />
+
+      {/* Labels below needle */}
+      <text x={CX} y={CY + 22} textAnchor="middle"
+        fontSize="10" fill="rgba(255,255,255,0.55)" fontWeight="700" letterSpacing="1.5">
+        INDIA VIX
+      </text>
+      <text x={CX} y={CY + 42} textAnchor="middle"
+        fontSize="28" fill="white" fontWeight="900" fontFamily="monospace">
+        {val > 0 ? val.toFixed(2) : '—'}
+      </text>
+      {/* Dot + level label */}
+      <circle cx={CX - 26} cy={CY + 57} r="4" fill={lvl.color} />
+      <text x={CX - 18} y={CY + 58} dominantBaseline="middle"
+        fontSize="13" fill={lvl.color} fontWeight="800">
+        {lvl.label}
+      </text>
+      {/* Change */}
+      {val > 0 && (
+        <text x={CX} y={CY + 74} textAnchor="middle"
+          fontSize="11" fill={change >= 0 ? '#ef4444' : '#22c55e'} fontWeight="600">
+          {change >= 0 ? '▲' : '▼'} {Math.abs(change).toFixed(2)}
+          {'  '}({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)
+        </text>
+      )}
+    </svg>
+  );
+}
+
 export default function IndexPage() {
   useBodyScroll();
   const { state, dispatch } = useApp();
-  const [prices,       setPrices]       = useState({});
-  const [lastRefresh,  setLastRefresh]  = useState(null);
-  const [marketOpen,   setMarketOpen]   = useState(isMarketOpen());
-  const [timings,      setTimings]      = useState({ date: null, rows: [] });
-  const [holidays,     setHolidays]     = useState([]);
-  const [holidaysOpen, setHolidaysOpen] = useState(false);
-  const [istClock,     setIstClock]     = useState({ time: '', date: '' });
-  const [aiSignals,    setAiSignals]    = useState(null);
+  const [prices,        setPrices]        = useState({});
+  const [lastRefresh,   setLastRefresh]   = useState(null);
+  const [marketOpen,    setMarketOpen]    = useState(isMarketOpen());
+  const [timings,       setTimings]       = useState({ date: null, rows: [] });
+  const [holidays,      setHolidays]      = useState([]);
+  const [holidaysOpen,  setHolidaysOpen]  = useState(false);
+  const [istClock,      setIstClock]      = useState({ time: '', date: '' });
+  const [aiSignals,     setAiSignals]     = useState(null);
+  const [vixData,       setVixData]       = useState(null);
+  const [globalIndices, setGlobalIndices] = useState([]);
 
   const isAdminOrMember = state.user?.role === 'admin' || state.user?.role === 'member';
 
@@ -169,6 +276,30 @@ export default function IndexPage() {
       .then(d => { if (d.success) setAiSignals(d); })
       .catch(() => {});
   }, [isAdminOrMember]);
+
+  // India VIX — poll every 60s
+  useEffect(() => {
+    const load = () =>
+      fetch(`${API_BASE}/api/market/vix`, { credentials: 'include' })
+        .then(r => r.json())
+        .then(d => { if (d.success && d.data) setVixData(d.data); })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Global indices — poll every 60s
+  useEffect(() => {
+    const load = () =>
+      fetch(`${API_BASE}/api/market/global-indices`, { credentials: 'include' })
+        .then(r => r.json())
+        .then(d => { if (d.success && d.data?.length) setGlobalIndices(d.data); })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Load market timings & holidays once
   useEffect(() => {
@@ -437,6 +568,47 @@ export default function IndexPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* ── VIX + Global Indices Row ── */}
+        {(vixData?.ltp > 0 || globalIndices.length > 0) && (
+          <div className="idx-vix-global-row">
+            {vixData && vixData.ltp > 0 && (
+              <div className="idx-vix-gauge-card">
+                <VixGauge vix={vixData} />
+              </div>
+            )}
+            {globalIndices.length > 0 && (
+              <div className="idx-global-wrap">
+                <div className="idx-section-title" style={{ marginBottom: 10 }}>Global Markets</div>
+                <div className="idx-global-grid">
+                  {globalIndices.map(g => {
+                    const up  = g.change >= 0;
+                    const clr = up ? '#22c55e' : '#ef4444';
+                    return (
+                      <div key={g.key} className="idx-global-card">
+                        <div className="idx-global-name">{g.short || g.name}</div>
+                        <div className="idx-global-fullname">{g.name}</div>
+                        <div className="idx-global-price">
+                          {g.ltp > 0
+                            ? g.ltp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                            : '—'}
+                        </div>
+                        <div className="idx-global-change" style={{ color: clr }}>
+                          {g.ltp > 0 ? (
+                            <>
+                              <span>{up ? '▲' : '▼'} {Math.abs(g.change).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                              <span className="idx-global-pct"> {up ? '+' : ''}{g.pct_change.toFixed(2)}%</span>
+                            </>
+                          ) : '—'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

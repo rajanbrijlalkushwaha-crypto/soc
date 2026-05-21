@@ -188,9 +188,9 @@ router.post('/download-all', async (req, res) => {
   }
 });
 
-// ── Daily scheduler: 4:00 PM + 4:30 PM IST (Mon–Fri) ────────────────────────
+// ── Daily scheduler: 4:00 PM, 4:30 PM, 8:00 PM IST (Mon–Fri) ────────────────
 // Upstox publishes FII/DII data after market close (3:30 PM IST).
-// We fetch at 4:00 PM and again at 4:30 PM to catch any delayed publication.
+// 4:00 PM + 4:30 PM catch initial publication; 8:00 PM catches delayed updates.
 const _fetched = new Set(); // tracks "YYYY-MM-DD_HH:MM" to avoid double-fire
 
 function scheduleDailyFetch() {
@@ -203,19 +203,20 @@ function scheduleDailyFetch() {
 
     if (dow === 0 || dow === 6) return; // skip weekends
 
-    // Fire at 16:00–16:02 and 16:30–16:32 IST
+    // Fire at 16:00–16:02, 16:30–16:32, 20:00–20:02 IST
     const is4pm   = hh === 16 && mm <= 2;
     const is430pm = hh === 16 && mm >= 30 && mm <= 32;
-    if (!is4pm && !is430pm) return;
+    const is8pm   = hh === 20 && mm <= 2;
+    if (!is4pm && !is430pm && !is8pm) return;
 
-    const slot = `${dd}_${is4pm ? '16:00' : '16:30'}`;
+    const slot = `${dd}_${is4pm ? '16:00' : is430pm ? '16:30' : '20:00'}`;
     if (_fetched.has(slot)) return;
     _fetched.add(slot);
 
     const token = _getToken();
     if (!token) return;
 
-    const label = is4pm ? '4:00 PM' : '4:30 PM';
+    const label = is4pm ? '4:00 PM' : is430pm ? '4:30 PM' : '8:00 PM';
     console.log(`[FII/DII] ${label} IST — auto-fetching...`);
     fetchAndSave(token)
       .then(n => console.log(`[FII/DII] Saved ${n} records`))

@@ -491,21 +491,21 @@ module.exports = function(app, httpServer, CONFIG) {
   // Load today's persisted candles into RAM before starting WS
   loadTodayFromDisk();
 
-  // Start Upstox WebSocket (REST fallback auto-starts on failure)
-  connectUpstoxWs();
+  // Upstox WebSocket disabled — REST API only
+  // connectUpstoxWs();
 
   // Backfill historical candles from Upstox API after startup settles
   setTimeout(() => backfillUpstoxCandles(_getToken), 20_000);
 
-  // ── Our WebSocket server for browser clients ─────────────────────────────
+  // ── WebSocket server for chart clients only (/ws/chart) ─────────────────
   const wss = new WebSocket.Server({ server: httpServer, path: '/ws/chart' });
   wss.on('connection', ws => {
     ws.on('message', raw => {
       try {
         const msg = JSON.parse(raw);
         if (msg.type === 'subscribe') {
-          const symbol  = (msg.symbol || '').toUpperCase();
-          const tf      = parseInt(msg.tf) || 5;
+          const symbol = (msg.symbol || '').toUpperCase();
+          const tf     = parseInt(msg.tf) || 5;
           subscriptions.set(ws, { symbol, tf });
           ws.send(JSON.stringify({ type: 'init', symbol, tf, candles: getCandles(symbol, tf) }));
         }
