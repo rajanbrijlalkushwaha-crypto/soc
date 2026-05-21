@@ -564,8 +564,9 @@ function buildSummary({ dayDir, overallChg, bestLeadOverall, avgAcc, keyPatterns
 // ── Batch run all dates ───────────────────────────────────────────────────────
 let _runStatus = { running: false, last_run: null, last_result: null };
 
-function runAllAnalysis(forceAll = false) {
-  // Note: caller (route or scheduleAutoRun) sets _runStatus.running = true before calling
+// Async version — yields between each symbol and between each date via setImmediate
+// so HTTP/WS requests are served between analysis chunks (old sync version froze event loop).
+async function runAllAnalysis(forceAll = false) {
   _runStatus.running = true;
 
   const dataDir = PATHS.MARKET;
@@ -574,22 +575,26 @@ function runAllAnalysis(forceAll = false) {
   let analyzed = 0, skipped = 0, errors = 0;
   const today = new Date().toISOString().split('T')[0];
 
-  folders(dataDir).forEach(symbol => {
-    folders(path.join(dataDir, symbol)).forEach(expiry => {
-      folders(path.join(dataDir, symbol, expiry)).forEach(date => {
-        const datePath  = path.join(dataDir, symbol, expiry, date);
+  for (const symbol of folders(dataDir)) {
+    // Yield between each symbol — lets HTTP/WS requests run
+    await new Promise(r => setImmediate(r));
+    for (const expiry of folders(path.join(dataDir, symbol))) {
+      for (const date of folders(path.join(dataDir, symbol, expiry))) {
+        const datePath   = path.join(dataDir, symbol, expiry, date);
         const resultFile = path.join(datePath, '_trainai.json');
 
         // Skip if already analyzed (unless forceAll or today's date)
-        if (!forceAll && fs.existsSync(resultFile) && date !== today) { skipped++; return; }
+        if (!forceAll && fs.existsSync(resultFile) && date !== today) { skipped++; continue; }
 
+        // Yield between each date — analyzeDay reads many .gz files synchronously
+        await new Promise(r => setImmediate(r));
         try {
           const r = analyzeDay(datePath, symbol, expiry, date);
           if (r) analyzed++; else skipped++;
         } catch(e) { errors++; console.error(`[TrainAI] Error ${symbol}/${expiry}/${date}:`, e.message); }
-      });
-    });
-  });
+      }
+    }
+  }
 
   const result = { analyzed, skipped, errors, ran_at: new Date().toISOString() };
   _runStatus = { running: false, last_run: new Date().toISOString(), last_result: result };
@@ -698,14 +703,15 @@ function isMarketHoursIST() {
 }
 
 function scheduleAutoRun() {
-  // Run once shortly after server starts (catches restarts during market hours)
+  // Delay startup run to 90s — server must be fully warmed (liveCache, tokens, WS)
+  // before TrainAI starts iterating disk. Old 20s delay overlapped with market-open
+  // data burst causing combined freeze.
   setTimeout(() => {
     if (!_runStatus.running) {
-      console.log('[TrainAI] Startup auto-analysis...');
-      _runStatus.running = true;
-      setImmediate(() => runAllAnalysis(false));
+      console.log('[TrainAI] Startup auto-analysis (async, non-blocking)...');
+      runAllAnalysis(false).catch(() => {});
     }
-  }, 20_000);
+  }, 90_000);
 
   setInterval(() => {
     const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
@@ -714,22 +720,18 @@ function scheduleAutoRun() {
     // After market close: run once at 15:35
     if (h === 15 && m === 35 && !_runStatus.running) {
       console.log('[TrainAI] Auto-running analysis after market close...');
-      _runStatus.running = true;
-      setImmediate(() => runAllAnalysis(false));
+      runAllAnalysis(false).catch(() => {});
       return;
     }
 
-    // During market hours: re-analyse today every 5 minutes.
-    // analyzeDay reads all .gz snapshots synchronously — running every 1 min blocks
-    // the event loop as files accumulate. 5 min keeps signals fresh without starvation.
+    // During market hours: re-analyse today every 10 minutes (async, yields between symbols)
     const _lastTrainAI = global._lastTrainAIRun || 0;
-    if (isMarketHoursIST() && !_runStatus.running && (Date.now() - _lastTrainAI) >= 300_000) {
+    if (isMarketHoursIST() && !_runStatus.running && (Date.now() - _lastTrainAI) >= 600_000) {
       global._lastTrainAIRun = Date.now();
       console.log('[TrainAI] Intraday auto-analysis...');
-      _runStatus.running = true;
-      setImmediate(() => runAllAnalysis(false));
+      runAllAnalysis(false).catch(() => {});
     }
-  }, 60_000); // check every minute, but run every 5 min
+  }, 60_000);
 }
 
 // ── Express Routes ────────────────────────────────────────────────────────────
@@ -762,11 +764,9 @@ module.exports = function(app) {
     if (_runStatus.running) return res.json({ success: false, message: 'Analysis already running' });
     // Manual run always processes all dates including old historical data
     const forceAll = true;
-    // Mark running BEFORE the timeout so the check inside runAllAnalysis doesn't race
     _runStatus.running = true;
-    setImmediate(() => {
-      try { runAllAnalysis(forceAll); }
-      catch(e) { _runStatus = { running: false, last_run: new Date().toISOString(), last_result: { analyzed: 0, skipped: 0, errors: 1 } }; }
+    runAllAnalysis(forceAll).catch(() => {
+      _runStatus = { running: false, last_run: new Date().toISOString(), last_result: { analyzed: 0, skipped: 0, errors: 1 } };
     });
     res.json({ success: true, message: 'Analysis started in background' });
   });
@@ -1094,8 +1094,7 @@ module.exports = function(app) {
         });
         if (todayMissing) {
           console.log('[TrainAI] Live cache: today missing _trainai.json — triggering analysis...');
-          _runStatus.running = true;
-          setImmediate(() => runAllAnalysis(false));
+          runAllAnalysis(false).catch(() => {});
         }
       }
 
@@ -1142,8 +1141,7 @@ module.exports = function(app) {
       });
       if (todayMissing) {
         console.log('[TrainAI] Live endpoint: today missing _trainai.json — triggering immediate analysis...');
-        _runStatus.running = true;
-        setImmediate(() => runAllAnalysis(false));
+        runAllAnalysis(false).catch(() => {});
       }
     }
     if (_liveAiCache.data) return res.json(_liveAiCache.data);
