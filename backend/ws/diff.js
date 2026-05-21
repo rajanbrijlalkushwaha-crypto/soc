@@ -107,12 +107,33 @@ function diffSnapshot(prev, next) {
   const chainDiff = diffChain(prev.chain, next.chain);
   if (chainDiff) result.chain = chainDiff;
 
-  // ── Chains map (all expiries) — full replacement when changed ─────────────
-  if (next.chains && JSON.stringify(prev.chains) !== JSON.stringify(next.chains)) {
-    result.chains = next.chains;
+  // ── Chains map (all expiries) — fast per-expiry early-exit check ─────────
+  // Avoids serializing the entire chains object (was 2× JSON.stringify per cycle per instrument)
+  if (next.chains) {
+    const prevExps = prev.chains ? Object.keys(prev.chains) : [];
+    const nextExps = Object.keys(next.chains);
+    let chainsChanged = prevExps.length !== nextExps.length ||
+      nextExps.some(e => !prev.chains?.[e]);
+    if (!chainsChanged) {
+      // Spot-check: compare total OI sum for each expiry (cheap proxy for content change)
+      for (const exp of nextExps) {
+        const nc = next.chains[exp], pc = prev.chains[exp];
+        if (!pc || nc.length !== pc.length) { chainsChanged = true; break; }
+        let nSum = 0, pSum = 0;
+        for (let i = 0; i < nc.length; i++) {
+          nSum += (nc[i].call?.oi || 0) + (nc[i].put?.oi || 0);
+          pSum += (pc[i].call?.oi || 0) + (pc[i].put?.oi || 0);
+        }
+        if (nSum !== pSum) { chainsChanged = true; break; }
+      }
+    }
+    if (chainsChanged) result.chains = next.chains;
   }
-  if (next.availableExpiries && JSON.stringify(prev.availableExpiries) !== JSON.stringify(next.availableExpiries)) {
-    result.availableExpiries = next.availableExpiries;
+  if (next.availableExpiries) {
+    const pe = prev.availableExpiries, ne = next.availableExpiries;
+    if (!pe || pe.length !== ne.length || ne.some((e, i) => e !== pe[i])) {
+      result.availableExpiries = ne;
+    }
   }
   if (prev.nextExpiry !== next.nextExpiry) result.nextExpiry = next.nextExpiry;
 

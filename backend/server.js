@@ -1334,21 +1334,25 @@ async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKe
       const cacheChain = processChainRows(rawRows);
 
       // Expiry dir scan — cached per instrument per date, runs at most once/day
+      // Uses async fs to avoid blocking the event loop during market-open burst
       const today = new Date().toISOString().split('T')[0];
       let isExpiryDay = false, currentExpiry = expiryDate, nextExpiry = null;
       let availableExpiries = [];
       try {
-        const symDir = path.join('Data', safeInstrumentName);
+        const symDir = path.join(PATHS.MARKET, safeInstrumentName);
         const ecKey  = `${safeInstrumentName}|${istDateFolder}`;
         if (!_expiryCache[ecKey]) {
-          const allExpiries = fs.readdirSync(symDir)
-            .filter(e => fs.statSync(path.join(symDir, e)).isDirectory()).sort();
+          const fsP = fs.promises;
+          const allEntries = await fsP.readdir(symDir, { withFileTypes: true }).catch(() => []);
+          const allExpiries = allEntries.filter(e => e.isDirectory()).map(e => e.name).sort();
           const futureExp = allExpiries.filter(e => e >= today);
-          const avail = allExpiries.filter(e => {
-            const dFolders = fs.readdirSync(path.join(symDir, e))
-              .filter(d => fs.statSync(path.join(symDir, e, d)).isDirectory()).sort();
-            return dFolders.at(-1) === istDateFolder;
-          });
+          // Check which expiries have today's date folder (async, in parallel)
+          const availChecks = await Promise.all(allExpiries.map(async e => {
+            const entries = await fsP.readdir(path.join(symDir, e), { withFileTypes: true }).catch(() => []);
+            const dirs = entries.filter(d => d.isDirectory()).map(d => d.name).sort();
+            return dirs.at(-1) === istDateFolder ? e : null;
+          }));
+          const avail = availChecks.filter(Boolean);
           _expiryCache[ecKey] = { allExpiries, futureExp, avail };
         }
         const ec      = _expiryCache[ecKey];
@@ -1463,7 +1467,11 @@ async function saveOptionChainData(expiryDate, chainData, analysis, instrumentKe
           const { connectDB } = require('./db/mongoose');
           const { OptionChain } = require('./db/models/OptionChain');
           await connectDB();
-          const _gz = zlib.gzipSync(Buffer.from(JSON.stringify({ m: dataToSave.m, a: dataToSave.a, oc: dataToSave.oc })));
+          // Use async gzip — never blocks the event loop (gzipSync was freezing server)
+          const _gz = await new Promise((resolve, reject) =>
+            zlib.gzip(Buffer.from(JSON.stringify({ m: dataToSave.m, a: dataToSave.a, oc: dataToSave.oc })),
+              (err, buf) => err ? reject(err) : resolve(buf))
+          );
           await OptionChain.create({
             symbol: safeInstrumentName,
             expiry: expiryDate,
