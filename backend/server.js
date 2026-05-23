@@ -3329,6 +3329,20 @@ app.get('/api/market/timings', (_req, res) => {
 const _vixCache    = { data: null, at: 0 };
 const _globalCache = { data: null, at: 0 };
 
+// Disk persistence paths — survive server restarts
+const _VIX_PERSIST    = path.join(PATHS.CONFIG, 'vix_last.json');
+const _GLOBAL_PERSIST = path.join(PATHS.CONFIG, 'global_last.json');
+
+// Warm caches from disk on startup
+try {
+  const vd = JSON.parse(fs.readFileSync(_VIX_PERSIST, 'utf8'));
+  if (vd?.ltp > 0) { _vixCache.data = vd; _vixCache.at = 0; }
+} catch (_) {}
+try {
+  const gd = JSON.parse(fs.readFileSync(_GLOBAL_PERSIST, 'utf8'));
+  if (Array.isArray(gd) && gd.some(x => x.ltp > 0)) { _globalCache.data = gd; _globalCache.at = 0; }
+} catch (_) {}
+
 const GLOBAL_INSTRUMENTS = [
   { key: 'GLOBAL_INDEX|SGX NIFTY',  name: 'GIFT Nifty',  short: 'GIFT'  },
   { key: 'GLOBAL_INDEX|^DJI',       name: 'Dow Jones',   short: 'DOW'   },
@@ -3359,7 +3373,10 @@ async function _doFetchVix() {
     const prev   = ltp - netChg;
     const pct    = prev > 0 ? (netChg / prev) * 100 : 0;
     const vData  = { ltp, prev_close: prev, change: netChg, pct_change: pct };
-    if (ltp > 0) { _vixCache.data = vData; _vixCache.at = Date.now(); }
+    if (ltp > 0) {
+      _vixCache.data = vData; _vixCache.at = Date.now();
+      fs.writeFile(_VIX_PERSIST, JSON.stringify(vData), () => {});
+    }
     return vData;
   } catch (e) { log(`[VIX fetch] ${e.message}`); return null; }
 }
@@ -3385,7 +3402,10 @@ async function _doFetchGlobal() {
       const pct    = prev > 0 ? (netChg / prev) * 100 : 0;
       return { key: g.key, name: g.name, short: g.short, ltp, prev_close: prev, change: netChg, pct_change: pct };
     });
-    if (data.some(d => d.ltp > 0)) { _globalCache.data = data; _globalCache.at = Date.now(); }
+    if (data.some(d => d.ltp > 0)) {
+      _globalCache.data = data; _globalCache.at = Date.now();
+      fs.writeFile(_GLOBAL_PERSIST, JSON.stringify(data), () => {});
+    }
     return data;
   } catch (e) { log(`[Global fetch] ${e.message}`); return null; }
 }
@@ -3393,10 +3413,14 @@ async function _doFetchGlobal() {
 app.get('/api/market/vix', requireAuth, async (req, res) => {
   try {
     if (_vixCache.data && Date.now() - _vixCache.at < 60_000)
-      return res.json({ success: true, data: _vixCache.data });
+      return res.json({ success: true, data: _vixCache.data, cached: true });
     const vData = await _doFetchVix();
-    res.json(vData ? { success: true, data: vData } : { success: false, data: null });
+    if (vData) return res.json({ success: true, data: vData });
+    // Fall back to last persisted data (stale but better than nothing)
+    if (_vixCache.data) return res.json({ success: true, data: _vixCache.data, stale: true });
+    res.json({ success: false, data: null });
   } catch (e) {
+    if (_vixCache.data) return res.json({ success: true, data: _vixCache.data, stale: true });
     res.json({ success: false, error: e.message, data: null });
   }
 });
@@ -3404,10 +3428,14 @@ app.get('/api/market/vix', requireAuth, async (req, res) => {
 app.get('/api/market/global-indices', requireAuth, async (req, res) => {
   try {
     if (_globalCache.data && Date.now() - _globalCache.at < 60_000)
-      return res.json({ success: true, data: _globalCache.data });
+      return res.json({ success: true, data: _globalCache.data, cached: true });
     const data = await _doFetchGlobal();
-    res.json(data ? { success: true, data } : { success: false, data: [] });
+    if (data) return res.json({ success: true, data });
+    // Fall back to last persisted data
+    if (_globalCache.data) return res.json({ success: true, data: _globalCache.data, stale: true });
+    res.json({ success: false, data: [] });
   } catch (e) {
+    if (_globalCache.data) return res.json({ success: true, data: _globalCache.data, stale: true });
     res.json({ success: false, error: e.message, data: [] });
   }
 });
